@@ -8,7 +8,7 @@
 ![Antigravity 2.0 CLI](https://img.shields.io/badge/Antigravity%202.0%20CLI-4285F4?style=flat-square&logo=google&logoColor=white) -
 ![Sent.dm](https://img.shields.io/badge/Sent.dm-FF6F00?style=flat-square) -
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white) -
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white) -
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white) 
 
 
 ## Overview
