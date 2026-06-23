@@ -10,7 +10,6 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white) 
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white) 
 
----
 
 ## Overview
 
@@ -23,8 +22,6 @@ Syncra is built for indie developers, AI tinkerers, and early-stage SaaS founder
 **Why it was built.**
 Syncra exists to demonstrate a faster path from idea to production: use an agentic CLI (**Antigravity 2.0**) to generate the full-stack scaffolding (frontend, API routes, database schema) directly from natural-language prompts, then bolt on **Sent.dm's** unified messaging API so the agent can speak SMS, WhatsApp, and RCS through one integration instead of three. The result is a personal AI agent that can be reached and replied to wherever the user already is.
 
----
-
 ## Features
 
 * AI agent that understands and responds to user requests (assumed)
@@ -35,8 +32,6 @@ Syncra exists to demonstrate a faster path from idea to production: use an agent
 * Next.js + React dashboard for managing agent conversations (assumed)
 * Template-based messaging for OTPs, confirmations, and replies
 * Environment-based configuration for API keys and database credentials
-
----
 
 ## Tech Stack
 
@@ -49,7 +44,6 @@ Syncra exists to demonstrate a faster path from idea to production: use an agent
 | Database | PostgreSQL | assumed |
 | Deployment | Docker / Vercel | assumed |
 
----
 
 ## Architecture
 
@@ -66,8 +60,6 @@ Delivery Webhooks → Status Updates (assumed)
 ```
 
 The client talks only to the Next.js service layer — it never calls Sent.dm directly. The service layer runs agent logic, decides what to send, and hands the message off to Sent.dm, which auto-routes it to the best available channel per recipient. Delivery confirmations flow back in through webhooks (assumed) so the dashboard can reflect real message status.
-
----
 
 ## Getting Started
 
@@ -111,18 +103,16 @@ await client.messages.send({
 });
 ```
 
----
-
 ## Contributing
 
 Issues and pull requests are welcome. Please open an issue first for major changes so they can be discussed before implementation.
 
 ## License
 
-MIT (assumed — confirm against the original project's license before reuse).
+MIT (confirm against the original project's license before reuse).
 
 ## Acknowledgments
 
 Inspired by and based on concepts from:
-**Source:** *Build a Full Stack AI Personal Agent App with Next.js, React, Antigravity 2.0 CLI & Sent.dm* — (channel unknown) (assumed)
+**Source:** *Build a Full Stack AI Personal Agent App with Next.js, React, Antigravity 2.0 CLI & Sent.dm* — (channel unknown)
 Key line: (transcript unavailable)
