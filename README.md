@@ -87,8 +87,6 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 npm run dev
 ```
 
----
-
 ## Usage
 
 ```ts
