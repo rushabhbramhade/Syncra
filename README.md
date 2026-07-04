@@ -1,5 +1,5 @@
 # Syncra
-
+ 
 **An AI-powered personal agent SaaS platform that talks to your users over SMS, WhatsApp, and RCS — scaffolded with Antigravity 2.0 CLI and powered by Sent.dm.**
 
 ![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=next.js&logoColor=white) -
