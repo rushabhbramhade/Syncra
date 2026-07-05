@@ -1,26 +1,125 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Inter+Tight:wght@600;700;800&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Roboto+Mono:wght@400;700&family=IBM+Plex+Mono:wght@400;700&display=swap');
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #F8FAFC;
+  --foreground: #111827;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@theme {
+  --color-primary: #2563EB;
+  --color-secondary: #0F172A;
+  
+  --color-background-mist: #F8FAFC;
+  --color-surface-white: #FFFFFF;
+  --color-border-mist: #E2E8F0;
+  --color-text-ink: #111827;
+  --color-text-slate: #64748B;
+  --color-text-fog: #94A3B8;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Accent Palette */
+  --color-accent-purple: #8B5CF6;
+  --color-accent-green: #22C55E;
+  --color-accent-orange: #F59E0B;
+  --color-accent-pink: #EC4899;
+  --color-accent-yellow: #FACC15;
+  --color-accent-cyan: #06B6D4;
+
+  /* Semantic Feedback Colors */
+  --color-success: #16A34A;
+  --color-success-bg: #F0FDF4;
+  --color-warning: #D97706;
+  --color-warning-bg: #FFFBEB;
+  --color-error: #DC2626;
+  --color-error-bg: #FEF2F2;
+  --color-info: #2563EB;
+  --color-info-bg: #EFF6FF;
+
+  /* Border Radii */
+  --radius-btn: 18px;
+  --radius-input: 18px;
+  --radius-card: 24px;
+  --radius-modal: 28px;
+  --radius-panel: 24px;
+
+  /* Shadow System (Flat offsets, no blur) */
+  --shadow-flat-sm: 4px 4px 0 rgba(15, 23, 42, 0.15);
+  --shadow-flat-md: 6px 6px 0 rgba(15, 23, 42, 0.15);
+  --shadow-flat-lg: 8px 8px 0 rgba(15, 23, 42, 0.15);
+  --shadow-flat-hover: 10px 10px 0 rgba(15, 23, 42, 0.18);
+
+  /* Fonts */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Inter Tight', 'Inter', sans-serif;
+  --font-serif: 'Playfair Display', serif;
+  --font-mono: 'Roboto Mono', 'IBM Plex Mono', monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-background-mist);
+  color: var(--color-text-ink);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Neo-Brutalist utility helper classes */
+.neo-border {
+  border: 2.5px solid #0F172A;
+}
+
+.neo-shadow-sm {
+  box-shadow: var(--shadow-flat-sm);
+}
+
+.neo-shadow-md {
+  box-shadow: var(--shadow-flat-md);
+}
+
+.neo-shadow-lg {
+  box-shadow: var(--shadow-flat-lg);
+}
+
+.neo-button-transition {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.neo-button-hover:hover {
+  transform: translate(-3px, -3px);
+  box-shadow: var(--shadow-flat-hover);
+}
+
+.neo-button-active:active {
+  transform: translate(0, 0);
+  box-shadow: none;
+}
+
+/* Custom marquee animation */
+@keyframes marquee {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
+}
+
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: marquee 30s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neo-button-hover:hover {
+    transform: none;
+  }
+  .neo-button-active:active {
+    transform: none;
+  }
+  .animate-marquee {
+    animation: none;
+    overflow-x: auto;
+    width: 100%;
+  }
 }
