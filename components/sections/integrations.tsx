@@ -1,20 +1,62 @@
 "use client";
 
-import React, { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { MessageSquare, Mail, Layers, Sparkles, Send } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import Image from "next/image";
+import { Layers, Sparkles } from "lucide-react";
 
 export function Integrations() {
   const [activePlatform, setActivePlatform] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const centerRef = useRef<HTMLDivElement>(null);
+  const platformRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const [lines, setLines] = useState<{ x1: number; y1: number; x2: number; y2: number }[]>([]);
 
   const platforms = [
-    { name: "Gmail", icon: "📧", color: "border-accent-orange bg-accent-orange/10 text-accent-orange", desc: "Auto-sort labels, filter receipts, draft professional responses." },
-    { name: "Slack", icon: "💬", color: "border-accent-pink bg-accent-pink/10 text-accent-pink", desc: "Thread summarization, task creation, follow-up flags." },
-    { name: "WhatsApp", icon: "🟢", color: "border-accent-green bg-accent-green/10 text-accent-green", desc: "Summarize voice notes, reply suggestions, client notification hub." },
-    { name: "Telegram", icon: "✈️", color: "border-accent-cyan bg-accent-cyan/10 text-accent-cyan", desc: "Group chat indexing, topic highlights, project management." },
-    { name: "Outlook", icon: "📬", color: "border-primary bg-primary/10 text-primary", desc: "Calendar synchronization, email reminders, inbox cleaning." },
-    { name: "Discord", icon: "👾", color: "border-accent-purple bg-accent-purple/10 text-accent-purple", desc: "Support ticketing, community summaries, alert filters." },
+    { name: "Gmail", icon: "/gmail.png", color: "border-accent-orange bg-accent-orange/10 text-accent-orange", desc: "Auto-sort labels, filter receipts, draft professional responses." },
+    { name: "Slack", icon: "/slack.png", color: "border-accent-pink bg-accent-pink/10 text-accent-pink", desc: "Thread summarization, task creation, follow-up flags." },
+    { name: "WhatsApp", icon: "/whatsapp.png", color: "border-accent-green bg-accent-green/10 text-accent-green", desc: "Summarize voice notes, reply suggestions, client notification hub." },
+    { name: "Telegram", icon: "/telegram.png", color: "border-accent-cyan bg-accent-cyan/10 text-accent-cyan", desc: "Group chat indexing, topic highlights, project management." },
+    { name: "Outlook", icon: "/email.png", color: "border-primary bg-primary/10 text-primary", desc: "Calendar synchronization, email reminders, inbox cleaning." },
+    { name: "Discord", icon: "/discord.png", color: "border-accent-purple bg-accent-purple/10 text-accent-purple", desc: "Support ticketing, community summaries, alert filters." },
   ];
+
+  const calculateLines = () => {
+    if (!containerRef.current || !svgRef.current || !centerRef.current) return;
+
+    const svgRect = svgRef.current.getBoundingClientRect();
+    const centerRect = centerRef.current.getBoundingClientRect();
+    const centerX = centerRect.left + centerRect.width / 2 - svgRect.left;
+    const centerY = centerRect.top + centerRect.height / 2 - svgRect.top;
+
+    const newLines = platformRefs.current.map((ref) => {
+      if (!ref) return { x1: 0, y1: 0, x2: 0, y2: 0 };
+      const rect = ref.getBoundingClientRect();
+      const x = rect.left + rect.width / 2 - svgRect.left;
+      const y = rect.top + rect.height / 2 - svgRect.top;
+      return { x1: centerX, y1: centerY, x2: x, y2: y };
+    });
+
+    setLines(newLines);
+  };
+
+  useEffect(() => {
+    const resizeObserver = new ResizeObserver(() => {
+      calculateLines();
+    });
+
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current);
+    }
+
+    window.addEventListener("resize", calculateLines);
+    setTimeout(calculateLines, 100);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", calculateLines);
+    };
+  }, []);
 
   return (
     <section id="integrations" className="py-24 md:py-32 bg-background-mist border-b-[2.5px] border-secondary overflow-hidden">
@@ -46,7 +88,7 @@ export function Integrations() {
           </h2>
 
           <p className="font-sans text-text-slate text-lg leading-relaxed mb-8 max-w-[540px]">
-            Syncar integrates directly with the applications you already use. Setup takes 2 clicks, and sync starts instantly. 
+            Syncra integrates directly with the applications you already use. Setup takes 2 clicks, and sync starts instantly. 
             All connections use TLS encryption and never store data on outside servers.
           </p>
 
@@ -71,91 +113,159 @@ export function Integrations() {
         </div>
 
         {/* Right Column: Visual Sync Hub */}
-        <div className="lg:col-span-7 relative flex justify-center items-center h-[520px] w-full">
+        <div className="lg:col-span-7 relative flex justify-center items-center h-[520px] md:h-[600px] w-full" ref={containerRef}>
           {/* SVG Connector Lines */}
-          <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
-            {/* Top Left */}
-            <path d="M 120 120 Q 200 200 290 230" fill="none" stroke="#0F172A" strokeWidth="2.5" className="sync-line" />
-            {/* Top Right */}
-            <path d="M 440 120 Q 360 200 310 230" fill="none" stroke="#0F172A" strokeWidth="2.5" className="sync-line" />
-            
-            {/* Mid Left */}
-            <path d="M 80 260 H 280" fill="none" stroke="#0F172A" strokeWidth="2.5" className="sync-line" />
-            {/* Mid Right */}
-            <path d="M 480 260 H 320" fill="none" stroke="#0F172A" strokeWidth="2.5" className="sync-line" />
-
-            {/* Bottom Left */}
-            <path d="M 120 400 Q 200 320 290 290" fill="none" stroke="#0F172A" strokeWidth="2.5" className="sync-line" />
-            {/* Bottom Right */}
-            <path d="M 440 400 Q 360 320 310 290" fill="none" stroke="#0F172A" strokeWidth="2.5" className="sync-line" />
+          <svg ref={svgRef} className="absolute inset-0 w-full h-full pointer-events-none z-0 hidden md:block">
+            {lines.map((line, index) => (
+              <line
+                key={index}
+                x1={line.x1}
+                y1={line.y1}
+                x2={line.x2}
+                y2={line.y2}
+                stroke="#0F172A"
+                strokeWidth="2.5"
+                className="sync-line"
+              />
+            ))}
           </svg>
 
           {/* Central Sync Core */}
-          <div className="relative w-36 h-36 rounded-full bg-primary neo-border flex items-center justify-center neo-shadow-lg z-20 hover:scale-105 transition-transform duration-300">
+          <div
+            ref={centerRef}
+            className="relative w-36 h-36 rounded-full bg-primary neo-border flex items-center justify-center neo-shadow-lg z-20 hover:scale-105 transition-transform duration-300"
+          >
             <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping pointer-events-none" />
             <Layers className="w-14 h-14 text-white" />
           </div>
 
-          {/* Platforms peripheral items */}
-          {/* Top Left */}
-          <button
-            onMouseEnter={() => setActivePlatform("Gmail")}
-            onMouseLeave={() => setActivePlatform(null)}
-            className="absolute top-14 left-14 md:left-24 w-18 h-18 rounded-2xl neo-border bg-white text-3xl flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10"
-            aria-label="Gmail integration details"
-          >
-            📧
-          </button>
+          {/* Mobile: Stacked Integrations */}
+          <div className="absolute bottom-0 left-0 right-0 flex flex-wrap justify-center gap-4 md:hidden px-4 pb-4">
+            {platforms.map((platform, index) => (
+              <button
+                key={index}
+                onMouseEnter={() => setActivePlatform(platform.name)}
+                onMouseLeave={() => setActivePlatform(null)}
+                onClick={() => setActivePlatform(platform.name)}
+                className="w-16 h-16 rounded-xl neo-border bg-white flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10"
+                aria-label={`${platform.name} integration details`}
+              >
+                <Image
+                  src={platform.icon}
+                  alt={platform.name}
+                  width={32}
+                  height={32}
+                  className="object-contain"
+                />
+              </button>
+            ))}
+          </div>
 
-          {/* Top Right */}
-          <button
-            onMouseEnter={() => setActivePlatform("Slack")}
-            onMouseLeave={() => setActivePlatform(null)}
-            className="absolute top-14 right-14 md:right-24 w-18 h-18 rounded-2xl neo-border bg-white text-3xl flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10"
-            aria-label="Slack integration details"
-          >
-            💬
-          </button>
-
-          {/* Mid Left */}
-          <button
-            onMouseEnter={() => setActivePlatform("WhatsApp")}
-            onMouseLeave={() => setActivePlatform(null)}
-            className="absolute top-1/2 left-4 md:left-12 -translate-y-1/2 w-18 h-18 rounded-2xl neo-border bg-white text-3xl flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10"
-            aria-label="WhatsApp integration details"
-          >
-            🟢
-          </button>
-
-          {/* Mid Right */}
-          <button
-            onMouseEnter={() => setActivePlatform("Telegram")}
-            onMouseLeave={() => setActivePlatform(null)}
-            className="absolute top-1/2 right-4 md:right-12 -translate-y-1/2 w-18 h-18 rounded-2xl neo-border bg-white text-3xl flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10"
-            aria-label="Telegram integration details"
-          >
-            ✈️
-          </button>
-
-          {/* Bottom Left */}
-          <button
-            onMouseEnter={() => setActivePlatform("Outlook")}
-            onMouseLeave={() => setActivePlatform(null)}
-            className="absolute bottom-14 left-14 md:left-24 w-18 h-18 rounded-2xl neo-border bg-white text-3xl flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10"
-            aria-label="Outlook integration details"
-          >
-            📬
-          </button>
-
-          {/* Bottom Right */}
-          <button
-            onMouseEnter={() => setActivePlatform("Discord")}
-            onMouseLeave={() => setActivePlatform(null)}
-            className="absolute bottom-14 right-14 md:right-24 w-18 h-18 rounded-2xl neo-border bg-white text-3xl flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10"
-            aria-label="Discord integration details"
-          >
-            👾
-          </button>
+          {/* Desktop: Grid-based Integrations */}
+          <div className="hidden md:grid grid-cols-3 grid-rows-3 w-full h-full absolute inset-0 gap-4 p-8">
+            {/* Top Left */}
+            <button
+              ref={(el) => { platformRefs.current[0] = el; }}
+              onMouseEnter={() => setActivePlatform(platforms[0].name)}
+              onMouseLeave={() => setActivePlatform(null)}
+              className="w-18 h-18 rounded-2xl neo-border bg-white flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10"
+              aria-label={`${platforms[0].name} integration details`}
+            >
+              <Image
+                src={platforms[0].icon}
+                alt={platforms[0].name}
+                width={32}
+                height={32}
+                className="object-contain"
+              />
+            </button>
+            {/* Top Center (Empty) */}
+            <div></div>
+            {/* Top Right */}
+            <button
+              ref={(el) => { platformRefs.current[1] = el; }}
+              onMouseEnter={() => setActivePlatform(platforms[1].name)}
+              onMouseLeave={() => setActivePlatform(null)}
+              className="w-18 h-18 rounded-2xl neo-border bg-white flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10 justify-self-end"
+              aria-label={`${platforms[1].name} integration details`}
+            >
+              <Image
+                src={platforms[1].icon}
+                alt={platforms[1].name}
+                width={32}
+                height={32}
+                className="object-contain"
+              />
+            </button>
+            {/* Mid Left */}
+            <button
+              ref={(el) => { platformRefs.current[2] = el; }}
+              onMouseEnter={() => setActivePlatform(platforms[2].name)}
+              onMouseLeave={() => setActivePlatform(null)}
+              className="w-18 h-18 rounded-2xl neo-border bg-white flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10 self-center"
+              aria-label={`${platforms[2].name} integration details`}
+            >
+              <Image
+                src={platforms[2].icon}
+                alt={platforms[2].name}
+                width={32}
+                height={32}
+                className="object-contain"
+              />
+            </button>
+            {/* Mid Center (Empty - Center is in middle) */}
+            <div></div>
+            {/* Mid Right */}
+            <button
+              ref={(el) => { platformRefs.current[3] = el; }}
+              onMouseEnter={() => setActivePlatform(platforms[3].name)}
+              onMouseLeave={() => setActivePlatform(null)}
+              className="w-18 h-18 rounded-2xl neo-border bg-white flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10 self-center justify-self-end"
+              aria-label={`${platforms[3].name} integration details`}
+            >
+              <Image
+                src={platforms[3].icon}
+                alt={platforms[3].name}
+                width={32}
+                height={32}
+                className="object-contain"
+              />
+            </button>
+            {/* Bottom Left */}
+            <button
+              ref={(el) => { platformRefs.current[4] = el; }}
+              onMouseEnter={() => setActivePlatform(platforms[4].name)}
+              onMouseLeave={() => setActivePlatform(null)}
+              className="w-18 h-18 rounded-2xl neo-border bg-white flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10 self-end"
+              aria-label={`${platforms[4].name} integration details`}
+            >
+              <Image
+                src={platforms[4].icon}
+                alt={platforms[4].name}
+                width={32}
+                height={32}
+                className="object-contain"
+              />
+            </button>
+            {/* Bottom Center (Empty) */}
+            <div></div>
+            {/* Bottom Right */}
+            <button
+              ref={(el) => { platformRefs.current[5] = el; }}
+              onMouseEnter={() => setActivePlatform(platforms[5].name)}
+              onMouseLeave={() => setActivePlatform(null)}
+              className="w-18 h-18 rounded-2xl neo-border bg-white flex items-center justify-center neo-shadow-sm hover:-translate-y-1 hover:shadow-flat-md active:translate-y-0 transition-all cursor-pointer z-10 self-end justify-self-end"
+              aria-label={`${platforms[5].name} integration details`}
+            >
+              <Image
+                src={platforms[5].icon}
+                alt={platforms[5].name}
+                width={32}
+                height={32}
+                className="object-contain"
+              />
+            </button>
+          </div>
         </div>
 
       </div>

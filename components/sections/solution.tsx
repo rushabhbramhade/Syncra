@@ -43,7 +43,7 @@ export function Solution() {
             </div>
 
             {/* Input Platforms (Messy) */}
-            <div className="flex justify-between items-center gap-2 mb-8 relative">
+            <div className="flex justify-between items-center gap-2 mb-8">
               <div className="p-3 bg-white rounded-lg neo-border shadow-flat-sm text-accent-pink flex flex-col items-center">
                 <MessageSquare className="w-6 h-6" />
                 <span className="font-mono text-[9px] font-bold mt-1">Slack</span>
@@ -60,9 +60,6 @@ export function Solution() {
                 <MessageSquare className="w-6 h-6" />
                 <span className="font-mono text-[9px] font-bold mt-1">Telegram</span>
               </div>
-
-              {/* Connector lines to central hub */}
-              <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-dashed border-t-2 border-secondary/20 z-0 pointer-events-none" />
             </div>
 
             {/* Middle: Engine Core */}

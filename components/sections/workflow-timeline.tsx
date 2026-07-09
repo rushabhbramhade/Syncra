@@ -60,9 +60,6 @@ export function WorkflowTimeline() {
 
         {/* Timeline Grid */}
         <div className="relative">
-          {/* Central connecting bar on desktop */}
-          <div className="absolute top-[120px] left-0 right-0 h-[2.5px] bg-secondary hidden lg:block z-0" />
-
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 relative z-10">
             {steps.map((item, idx) => (
               <div key={idx} className="flex flex-col items-center text-center">

@@ -1,19 +1,33 @@
+"use client";
+
 import React from "react";
+import ScrollVelocity from "../ui/ScrollVelocity";
 
 export function TrustedBy() {
-  const logos = [
-    { name: "Vercel", icon: "▲" },
-    { name: "Linear", icon: "⧉" },
-    { name: "Stripe", icon: "💳" },
-    { name: "Framer", icon: "🖽" },
-    { name: "Notion", icon: "📝" },
-    { name: "Arc", icon: "🧭" },
-    { name: "Raycast", icon: "⌘" },
-    { name: "Airbnb", icon: "🏠" },
+  const logoItems = [
+    { icon: "▲", name: "Vercel" },
+    { icon: "⧉", name: "Linear" },
+    { icon: "💳", name: "Stripe" },
+    { icon: "�", name: "Framer" },
+    { icon: "�", name: "Notion" },
+    { icon: "🧭", name: "Arc" },
+    { icon: "⌘", name: "Raycast" },
+    { icon: "🏠", name: "Airbnb" },
   ];
 
-  // Duplicate the list to create a seamless infinite scrolling loop
-  const marqueeLogos = [...logos, ...logos, ...logos, ...logos];
+  const LogoRow = () => (
+    <div className="flex items-center">
+      {logoItems.map((logo, i) => (
+        <div
+          key={`logo-${i}`}
+          className="flex items-center gap-3.5 mx-8 md:mx-12 font-display font-black text-xl md:text-2xl text-secondary grayscale hover:grayscale-0 hover:scale-105 transition-all duration-300 ease-out cursor-pointer"
+        >
+          <span className="text-lg md:text-xl">{logo.icon}</span>
+          <span>{logo.name}</span>
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <section className="py-12 bg-white border-y-[2.5px] border-secondary overflow-hidden select-none">
@@ -23,24 +37,15 @@ export function TrustedBy() {
         </h2>
       </div>
 
-      {/* Marquee Wrapper */}
-      <div className="relative w-full overflow-hidden flex">
-        {/* Left/Right Scrim gradient shadows */}
-        <div className="absolute top-0 bottom-0 left-0 w-20 md:w-32 bg-gradient-to-r from-white to-transparent z-10 pointer-events-none" />
-        <div className="absolute top-0 bottom-0 right-0 w-20 md:w-32 bg-gradient-to-l from-white to-transparent z-10 pointer-events-none" />
+      <div className="relative w-full overflow-hidden">
+        <div className="absolute top-0 bottom-0 left-0 w-24 md:w-32 bg-gradient-to-r from-white via-white/90 to-transparent z-10 pointer-events-none" />
+        <div className="absolute top-0 bottom-0 right-0 w-24 md:w-32 bg-gradient-to-l from-white via-white/90 to-transparent z-10 pointer-events-none" />
 
-        {/* Marquee Inner container */}
-        <div className="animate-marquee py-2">
-          {marqueeLogos.map((logo, index) => (
-            <div
-              key={`${logo.name}-${index}`}
-              className="flex items-center gap-3.5 mx-8 md:mx-12 font-display font-black text-2xl md:text-3xl text-text-slate/60 hover:text-secondary cursor-pointer transition-colors"
-            >
-              <span className="text-xl md:text-2xl">{logo.icon}</span>
-              <span>{logo.name}</span>
-            </div>
-          ))}
-        </div>
+        <ScrollVelocity
+          texts={[<LogoRow key="logos" />]}
+          velocity={50}
+          numCopies={6}
+        />
       </div>
     </section>
   );
