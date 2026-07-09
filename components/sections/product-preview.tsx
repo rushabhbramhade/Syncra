@@ -97,15 +97,23 @@ export function ProductPreview() {
             <nav className="flex flex-col gap-3 font-sans text-[15px] font-medium text-text-fog/75">
               <a href="#" className="flex items-center gap-2.5 text-white bg-white/10 px-3.5 py-2 rounded-[12px] font-bold">
                 <Bell className="w-4.5 h-4.5 text-primary" />
-                <span>Inbox Feed</span>
+                <span>Dashboard</span>
               </a>
               <a href="#" className="flex items-center gap-2.5 hover:text-white px-3.5 py-2 rounded-[12px]">
-                <Calendar className="w-4.5 h-4.5" />
-                <span>Tasks & Reminders</span>
+                <Sparkles className="w-4.5 h-4.5" />
+                <span>AI Agents</span>
               </a>
               <a href="#" className="flex items-center gap-2.5 hover:text-white px-3.5 py-2 rounded-[12px]">
-                <Search className="w-4.5 h-4.5" />
-                <span>Search Archives</span>
+                <MessageSquare className="w-4.5 h-4.5" />
+                <span>Briefing</span>
+              </a>
+              <a href="#" className="flex items-center gap-2.5 hover:text-white px-3.5 py-2 rounded-[12px]">
+                <Send className="w-4.5 h-4.5" />
+                <span>Integration</span>
+              </a>
+              <a href="#" className="flex items-center gap-2.5 hover:text-white px-3.5 py-2 rounded-[12px]">
+                <Bell className="w-4.5 h-4.5" />
+                <span>Alerts</span>
               </a>
             </nav>
 

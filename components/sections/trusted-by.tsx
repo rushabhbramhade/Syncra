@@ -8,8 +8,8 @@ export function TrustedBy() {
     { icon: "▲", name: "Vercel" },
     { icon: "⧉", name: "Linear" },
     { icon: "💳", name: "Stripe" },
-    { icon: "�", name: "Framer" },
-    { icon: "�", name: "Notion" },
+    { icon: "🟦", name: "Framer" },
+    { icon: "⬛", name: "Notion" },
     { icon: "🧭", name: "Arc" },
     { icon: "⌘", name: "Raycast" },
     { icon: "🏠", name: "Airbnb" },
@@ -20,9 +20,9 @@ export function TrustedBy() {
       {logoItems.map((logo, i) => (
         <div
           key={`logo-${i}`}
-          className="flex items-center gap-3.5 mx-8 md:mx-12 font-display font-black text-xl md:text-2xl text-secondary grayscale hover:grayscale-0 hover:scale-105 transition-all duration-300 ease-out cursor-pointer"
+          className="flex items-center gap-3.5 mx-8 md:mx-12 font-display font-black text-xl md:text-4xl text-secondary grayscale hover:grayscale-0 hover:scale-105 transition-all duration-300 ease-out cursor-pointer"
         >
-          <span className="text-lg md:text-xl">{logo.icon}</span>
+          <span className="text-2xl md:text-3xl">{logo.icon}</span>
           <span>{logo.name}</span>
         </div>
       ))}
