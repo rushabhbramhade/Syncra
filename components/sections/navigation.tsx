@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Menu, X, ArrowRight } from "lucide-react";
 
@@ -39,14 +40,11 @@ export function Navigation() {
     >
       <div className="max-w-[1280px] mx-auto px-6 md:px-12 flex items-center justify-between">
         {/* Logo */}
-        <a href="#" className="flex items-center gap-2.5 focus-visible:ring-2 focus-visible:ring-primary rounded-lg outline-none">
-          <div className="relative w-8 h-8 rounded-lg bg-primary neo-border flex items-center justify-center text-white font-black text-xl neo-shadow-sm">
-            S
-          </div>
+        <Link href="/" className="flex items-center gap-2.5 focus-visible:ring-2 focus-visible:ring-primary rounded-lg outline-none">
           <span className="font-display font-black text-[22px] tracking-tight text-secondary">
             Syncar
           </span>
-        </a>
+        </Link>
 
         {/* Desktop Nav Links */}
         <nav className="hidden md:flex items-center gap-8">
@@ -63,13 +61,17 @@ export function Navigation() {
 
         {/* Desktop CTAs */}
         <div className="hidden md:flex items-center gap-4">
-          <Button variant="ghost" size="sm">
-            Sign In
-          </Button>
-          <Button variant="primary" size="sm" className="group">
-            <span>Get Started</span>
-            <ArrowRight className="w-4 h-4 ml-1.5 transition-transform group-hover:translate-x-1" />
-          </Button>
+          <Link href="/sign-in" passHref>
+            <Button variant="ghost" size="sm">
+              Sign In
+            </Button>
+          </Link>
+          <Link href="/sign-up" passHref>
+            <Button variant="primary" size="sm" className="group">
+              <span>Get Started</span>
+              <ArrowRight className="w-4 h-4 ml-1.5 transition-transform group-hover:translate-x-1" />
+            </Button>
+          </Link>
         </div>
 
         {/* Mobile Hamburger Menu button */}
@@ -99,15 +101,20 @@ export function Navigation() {
           </nav>
 
           <div className="flex flex-col gap-4 mt-8">
-            <Button variant="secondary" size="lg" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
-              Sign In
-            </Button>
-            <Button variant="primary" size="lg" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
-              Get Started Free
-            </Button>
+            <Link href="/sign-in" passHref className="w-full">
+              <Button variant="secondary" size="lg" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
+                Sign In
+              </Button>
+            </Link>
+            <Link href="/sign-up" passHref className="w-full">
+              <Button variant="primary" size="lg" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
+                Get Started Free
+              </Button>
+            </Link>
           </div>
         </div>
       )}
     </header>
   );
 }
+
