@@ -1,45 +1,109 @@
 "use client";
 
-import React, { useState } from "react";
-import { Sidebar } from "@/components/layout/Sidebar";
+import React, { useState, useEffect, useCallback } from "react";
+import { DashboardSidebar } from "@/components/dashboard/sidebar";
+import { DashboardTopNav } from "@/components/dashboard/top-nav";
+
+const SIDEBAR_KEY = "syncra-sidebar-collapsed";
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  /* ── Sidebar state ── */
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  /* Persist & restore collapsed state */
+  useEffect(() => {
+    const stored = localStorage.getItem(SIDEBAR_KEY);
+    if (stored === "true") setCollapsed(true);
+    setHydrated(true);
+  }, []);
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem(SIDEBAR_KEY, String(next));
+      return next;
+    });
+  }, []);
+
+  const openMobile = useCallback(() => setMobileOpen(true), []);
+  const closeMobile = useCallback(() => setMobileOpen(false), []);
+
+  /* Close mobile drawer on resize to desktop */
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const handler = () => {
+      if (mq.matches) setMobileOpen(false);
+    };
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  /* Auto-collapse on tablets */
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px) and (max-width: 1023px)");
+    if (mq.matches) {
+      setCollapsed(true);
+    }
+  }, []);
+
+  /* Prevent FOUC — render nothing until hydrated */
+  if (!hydrated) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background-mist">
+        <div className="flex flex-col items-center gap-3">
+          <svg
+            className="animate-spin h-8 w-8 text-primary"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+          <p className="text-[14px] font-bold text-text-slate">
+            Loading workspace…
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-background-mist font-sans">
       {/* ── Sidebar ── */}
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
+      <DashboardSidebar
+        collapsed={collapsed}
+        onToggle={toggleCollapsed}
+        mobileOpen={mobileOpen}
+        onMobileClose={closeMobile}
+      />
 
-      {/* ── Main area ── */}
+      {/* ── Main Content Area ── */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        {/* Top bar */}
-        <header className="flex-shrink-0 flex items-center justify-between px-6 py-4 bg-surface-white border-b-[2.5px] border-secondary z-20 sticky top-0">
-          <div>
-            <h1 className="font-display font-black text-xl text-secondary leading-tight">
-              Dashboard
-            </h1>
-            <p className="text-[13px] text-text-slate font-medium mt-0.5">
-              Welcome back 👋 — here's your workspace overview.
-            </p>
-          </div>
+        {/* Top navigation */}
+        <DashboardTopNav onMobileMenuOpen={openMobile} />
 
-          <div className="flex items-center gap-3">
-            {/* Realtime pulse */}
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-background-mist border-[2px] border-border-mist rounded-full text-xs font-bold text-text-slate">
-              <span className="w-2 h-2 rounded-full bg-success animate-ping" />
-              <span>Realtime Connected</span>
-            </div>
+        {/* Scrollable page content */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8 max-w-[1440px] mx-auto">
+            {children}
           </div>
-        </header>
-
-        {/* Scrollable content */}
-        <main className="flex-1 overflow-y-auto px-6 py-8">
-          {children}
         </main>
       </div>
     </div>

@@ -6,6 +6,11 @@
   --foreground: #111827;
 }
 
+.dark {
+  --background: #0B1120;
+  --foreground: #E2E8F0;
+}
+
 @theme {
   --color-primary: #2563EB;
   --color-secondary: #0F172A;
@@ -61,23 +66,85 @@ body {
   font-family: var(--font-sans);
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
+
+/* ══════════════════════════════════════════════
+   DARK MODE — Override all design tokens
+   Activated by .dark class on <html>
+   ══════════════════════════════════════════════ */
+.dark body {
+  background-color: #0B1120;
+  color: #E2E8F0;
+}
+
+/* ── Backgrounds & Surfaces ── */
+.dark .bg-background-mist { background-color: #0B1120 !important; }
+.dark .bg-surface-white    { background-color: #111827 !important; }
+
+/* ── Borders ── */
+.dark .border-border-mist { border-color: #1E293B !important; }
+.dark .border-secondary   { border-color: #334155 !important; }
+
+/* ── Text ── */
+.dark .text-secondary     { color: #F1F5F9 !important; }
+.dark .text-text-ink      { color: #E2E8F0 !important; }
+.dark .text-text-slate    { color: #94A3B8 !important; }
+.dark .text-text-fog      { color: #64748B !important; }
+
+/* ── Surface/Card internals ── */
+.dark .bg-background-mist\/30,
+.dark [class*="bg-background-mist"] { background-color: #0F1629 !important; }
+
+/* ── Neo-Brutalist Input/Search ── */
+.dark input,
+.dark textarea {
+  color: #E2E8F0 !important;
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #64748B !important;
+}
+
+/* ── Semantic Feedback Dark Overrides ── */
+.dark .bg-success-bg   { background-color: #052E16 !important; }
+.dark .bg-warning-bg   { background-color: #422006 !important; }
+.dark .bg-error-bg     { background-color: #450A0A !important; }
+.dark .bg-info-bg      { background-color: #172554 !important; }
+
+/* ── Notification / Dropdown panels ── */
+.dark .bg-surface-white\/95 { background-color: rgba(17, 24, 39, 0.97) !important; }
+
+/* ── Hover states ── */
+.dark .hover\:bg-border-mist:hover { background-color: #1E293B !important; }
 
 /* Custom Neo-Brutalist utility helper classes */
 .neo-border {
   border: 2.5px solid #0F172A;
 }
+.dark .neo-border {
+  border-color: #334155;
+}
 
 .neo-shadow-sm {
   box-shadow: var(--shadow-flat-sm);
+}
+.dark .neo-shadow-sm {
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.35);
 }
 
 .neo-shadow-md {
   box-shadow: var(--shadow-flat-md);
 }
+.dark .neo-shadow-md {
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.35);
+}
 
 .neo-shadow-lg {
   box-shadow: var(--shadow-flat-lg);
+}
+.dark .neo-shadow-lg {
+  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.35);
 }
 
 .neo-button-transition {
@@ -123,3 +190,40 @@ body {
     width: 100%;
   }
 }
+
+/* ── Dashboard scrollbar utilities ── */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Dark mode scrollbar ── */
+.dark ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.dark ::-webkit-scrollbar-track {
+  background: #0B1120;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 100px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* ── Theme transition helper ── */
+.theme-transition,
+.theme-transition *,
+.theme-transition *::before,
+.theme-transition *::after {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease !important;
+}
+
+/* ── Dark mode gradient overrides ── */
+.dark .from-primary { --tw-gradient-from: #3B82F6; }
+.dark .to-accent-purple { --tw-gradient-to: #A78BFA; }
