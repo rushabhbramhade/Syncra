@@ -211,3 +211,36 @@ export async function signInWithGoogleAction(redirectTo: string) {
   }
 }
 
+export async function getCurrentUserAction() {
+  const cookieStore = await cookies();
+  const client = createServerClient({
+    baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
+    anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
+    cookies: cookieStore,
+  });
+
+  try {
+    const { data, error } = await client.auth.getCurrentUser();
+    if (error) {
+      return {
+        data: null,
+        error: {
+          message: error.message,
+          statusCode: error.statusCode,
+          error: error.error,
+        },
+      };
+    }
+    return { data, error: null };
+  } catch (err: any) {
+    return {
+      data: null,
+      error: {
+        message: err.message || "Failed to get current user",
+        statusCode: 500,
+        error: "INTERNAL_ERROR",
+      },
+    };
+  }
+}
+

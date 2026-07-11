@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { insforge } from "@/lib/insforge";
+import { useAuth } from "@/components/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
@@ -38,16 +38,6 @@ import {
   ExternalLink
 } from "lucide-react";
 
-interface InsforgeUser {
-  id: string;
-  email: string;
-  profile?: {
-    name?: string;
-    avatar_url?: string;
-  } | null;
-  providers?: string[];
-  emailVerified: boolean;
-}
 
 interface Platform {
   id: string;
@@ -140,27 +130,11 @@ const PLATFORMS = [
 export default function IntegrationsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  
-  const [user, setUser] = useState<InsforgeUser | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const stored = localStorage.getItem("syncra-user-session");
-        return stored ? JSON.parse(stored) : null;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
-  const [isLoading, setIsLoading] = useState(() => {
-    if (typeof window !== "undefined") {
-      return !localStorage.getItem("syncra-user-session");
-    }
-    return true;
-  });
+  const { user, isLoading: authLoading } = useAuth();
+  const [isDataLoading, setIsDataLoading] = useState(true);
 
-  // Guard: run the session fetch exactly once per mount.
-  const hasFetched = useRef(false);
+  const isLoading = authLoading || isDataLoading;
+
   // Track mount status so we never call setState after unmount.
   const isMounted = useRef(true);
 
@@ -198,37 +172,34 @@ export default function IntegrationsPage() {
   const [composeBody, setComposeBody] = useState("");
   const [isSendingEmail, setIsSendingEmail] = useState(false);
 
-  // Fetch session, then load page data — errors in data loading are isolated
-  // and never treated as "session invalid".
-  const fetchSessionAndStatus = useCallback(async () => {
+  // Fetch page data — failures here show inline errors, never redirect
+  const fetchPageData = useCallback(async (userId: string) => {
     if (typeof window === "undefined") return;
     if (!isMounted.current) return;
+    setIsDataLoading(true);
     try {
-      // ── Step 1: Verify session (auth failure → redirect, nothing else does) ──
-      const { data, error } = await insforge.auth.getCurrentUser();
-      if (!isMounted.current) return;
-      if (error || !data?.user) {
-        localStorage.removeItem("syncra-user-session");
-        localStorage.removeItem("syncra-db-user-session");
-        router.replace("/sign-in");
-        return;
-      }
-      setUser(data.user);
-      localStorage.setItem("syncra-user-session", JSON.stringify(data.user));
-      const userId = data.user.id;
-
-      // ── Step 2: Load page data — failures here show inline errors, never redirect ──
       try {
-        const [gmailConn, isConfigured] = await Promise.all([
-          getGmailConnectionStatus(userId),
-          checkGoogleApiConfig(),
-        ]);
+        const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("DATA_FETCH_TIMEOUT")), 8000)
+        );
+        const [gmailConn, isConfigured] = await Promise.race([
+          Promise.all([
+            getGmailConnectionStatus(userId),
+            checkGoogleApiConfig(),
+          ]),
+          timeout.then(() => { throw new Error("DATA_FETCH_TIMEOUT"); })
+        ]) as [ConnectionStatus | null, boolean];
         if (!isMounted.current) return;
         setGmailStatus(gmailConn);
         setIsGoogleConfiguredOnServer(isConfigured);
-      } catch (dataErr) {
-        // Data load failed — log it but do NOT redirect or wipe session
-        console.error("[Integrations] Failed to load connection data:", dataErr);
+      } catch (dataErr: unknown) {
+        // Data load failed — log it but do NOT redirect
+        const errObj = dataErr as { message?: string };
+        if (errObj?.message === "DATA_FETCH_TIMEOUT") {
+          console.warn("[Integrations] Page data fetch timed out, showing page without connection status.");
+        } else {
+          console.error("[Integrations] Failed to load connection data:", dataErr);
+        }
       }
 
       // Load mock integration list from localStorage
@@ -266,27 +237,31 @@ export default function IntegrationsPage() {
         localStorage.setItem("syncra-enabled-mcp-tools", JSON.stringify(defaultTools));
       }
     } catch (err) {
-      // Only unhandled auth-level errors reach here
-      if (!isMounted.current) return;
-      console.error("[Integrations] Auth check failed:", err);
-      localStorage.removeItem("syncra-user-session");
-      localStorage.removeItem("syncra-db-user-session");
-      router.replace("/sign-in");
+      console.error("[Integrations] Error loading page data:", err);
     } finally {
-      if (isMounted.current) setIsLoading(false);
+      if (isMounted.current) setIsDataLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router]);
+  }, []);
+
+  const hasFetched = useRef(false);
 
   useEffect(() => {
     isMounted.current = true;
-    // Fire exactly once per mount — guards against Strict Mode double-invoke
-    if (hasFetched.current) return;
-    hasFetched.current = true;
-    fetchSessionAndStatus();
-    return () => { isMounted.current = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!authLoading && user && !hasFetched.current) {
+      hasFetched.current = true;
+      fetchPageData(user.id);
+    }
+    return () => {
+      isMounted.current = false;
+    };
+  }, [authLoading, user, fetchPageData]);
+
+  // Redirect backstop: if user is not present and loading has finished, redirect to /sign-in
+  useEffect(() => {
+    if (!authLoading && !user) {
+      window.location.href = "/sign-in";
+    }
+  }, [authLoading, user]);
 
   // Handle URL query parameters for callback notifications
   useEffect(() => {
@@ -383,7 +358,7 @@ export default function IntegrationsPage() {
   // Gmail Disconnect Click
   const handleGmailDisconnect = async () => {
     if (!user) return;
-    setIsLoading(true);
+    setIsDataLoading(true);
     try {
       await disconnectGmailConnection(user.id);
       setGmailStatus(null);
@@ -393,7 +368,7 @@ export default function IntegrationsPage() {
       const errorObj = e as { message?: string };
       setErrorMessage("Failed to disconnect Gmail: " + (errorObj.message || "Unknown error"));
     } finally {
-      setIsLoading(false);
+      setIsDataLoading(false);
     }
   };
 

@@ -63,10 +63,10 @@ const getResponseStore = (response: NextResponse): CookieStore => ({
   }
 });
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const response = NextResponse.next({ request });
 
-  console.log("   [Proxy Request Cookies]:", request.cookies.getAll().map(c => `${c.name}=${c.value.substring(0, 15)}...`));
+  console.log("   [Middleware Request Cookies]:", request.cookies.getAll().map(c => `${c.name}=${c.value.substring(0, 15)}...`));
 
   const requestStore = getRequestStore(request);
   const responseStore = getResponseStore(response);
@@ -81,7 +81,7 @@ export async function proxy(request: NextRequest) {
       anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
     });
   } catch (e) {
-    console.error("Proxy session update failed:", e);
+    console.error("Middleware session update failed:", e);
   }
 
   // 2. Resolve access token
@@ -109,14 +109,18 @@ export async function proxy(request: NextRequest) {
   // Protect /dashboard route: redirect unauthenticated users to /sign-in
   if (path.startsWith("/dashboard")) {
     if (!isAuthenticated) {
-      return NextResponse.redirect(new URL("/sign-in", request.url));
+      const redirectResp = NextResponse.redirect(new URL("/sign-in", request.url));
+      response.cookies.getAll().forEach((c) => redirectResp.cookies.set(c.name, c.value, c));
+      return redirectResp;
     }
   }
 
   // Protect /sign-in and /sign-up: redirect authenticated users to /dashboard
   if (path === "/sign-in" || path === "/sign-up") {
     if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
+      const redirectResp = NextResponse.redirect(new URL("/dashboard", request.url));
+      response.cookies.getAll().forEach((c) => redirectResp.cookies.set(c.name, c.value, c));
+      return redirectResp;
     }
   }
 

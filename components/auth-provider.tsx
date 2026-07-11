@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { insforge } from "@/lib/insforge";
-import { syncUserToDatabase, signOutAction } from "@/app/actions";
+import { syncUserToDatabase, signOutAction, getCurrentUserAction } from "@/app/actions";
 
 export interface InsforgeUser {
   id: string;
@@ -86,9 +86,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const result = await Promise.race([
-        insforge.auth.getCurrentUser(),
+        getCurrentUserAction(),
         timeoutPromise
-      ]) as Awaited<ReturnType<typeof insforge.auth.getCurrentUser>>;
+      ]) as Awaited<ReturnType<typeof getCurrentUserAction>>;
 
       if (!isMounted.current) return;
 
@@ -169,42 +169,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [refreshSession]);
 
-  // Brief loading spinner while verifying session — resolves either way via timeout ceiling
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background-mist font-sans">
-        <div className="text-center space-y-4 max-w-sm px-6">
-          <svg className="animate-spin h-10 w-10 text-primary mx-auto" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <p className="font-bold text-secondary text-lg">Loading your workspace...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Hard error state display (only when errorMsg exists and user is unauthenticated)
-  if (errorMsg && !user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background-mist font-sans">
-        <div className="p-6 bg-error-bg border-[2px] border-error rounded-2xl text-center space-y-4 max-w-md">
-          <div>
-            <h3 className="font-bold text-secondary text-lg">Connection Error</h3>
-            <p className="text-error text-[15px] max-w-md mx-auto mt-1 font-medium">
-              {errorMsg}
-            </p>
-          </div>
-          <button
-            onClick={() => refreshSession()}
-            className="px-4 py-2 bg-white border-2 border-secondary text-secondary rounded-xl text-sm font-bold shadow-sm hover:bg-secondary hover:text-white transition-colors"
-          >
-            Retry Connection
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // Auth is initializing — expose isLoading via context so each page can render its own skeleton
+  // We do NOT block children here to avoid redirect races and flash-of-redirect issues.
 
   return (
     <AuthContext.Provider value={{ user, dbUser, isLoading, errorMsg, refreshSession, clearSession }}>
