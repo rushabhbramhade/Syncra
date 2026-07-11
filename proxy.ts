@@ -1,7 +1,6 @@
 /* eslint-disable */
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession, clearAuthCookies, type CookieStore } from "@insforge/sdk/ssr/middleware";
-import { createServerClient } from "@insforge/sdk/ssr";
 
 // Decode JWT to check for expiry (without verifying signature on proxy)
 function isJwtExpired(token: string): boolean {
@@ -89,42 +88,14 @@ export async function proxy(request: NextRequest) {
   const accessToken = response.cookies.get("insforge_access_token")?.value || 
                       request.cookies.get("insforge_access_token")?.value;
 
-  // 3. Check authentication status
-  const path = request.nextUrl.pathname;
-  let isAuthenticated = false;
+  // 3. Harden the check: Validate token structure & expiry + check refresh error
+  const isTokenInvalid = !accessToken || isJwtExpired(accessToken);
+  const isRefreshFailed = !!sessionResult?.error;
 
-  if (accessToken && !isJwtExpired(accessToken) && !sessionResult?.error) {
-    // If the token is structure-valid and not expired, we perform a server-side backend check
-    // only for page routes under /dashboard to verify if the session has been signature-invalidated or revoked.
-    if (path.startsWith("/dashboard")) {
-      const isMockToken = accessToken.endsWith(".signature");
-      if (isMockToken) {
-        isAuthenticated = true;
-      } else {
-        try {
-          const client = createServerClient({
-            baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
-            anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
-            accessToken, // Pass accessToken explicitly
-          });
-          const { data, error } = await client.auth.getCurrentUser();
-          if (data?.user && !error) {
-            isAuthenticated = true;
-          } else {
-            console.warn("Proxy detected signature-invalidated or revoked session on backend:", error);
-          }
-        } catch (err) {
-          console.error("Error validating session on backend in proxy:", err);
-          // Fallback to true on unexpected backend connection/network errors to prevent lockout
-          isAuthenticated = true;
-        }
-      }
-    } else {
-      isAuthenticated = true;
-    }
-  }
-
-  if (!isAuthenticated) {
+  let isAuthenticated = true;
+  if (isTokenInvalid || isRefreshFailed) {
+    isAuthenticated = false;
+    
     // Clear response cookies to ensure stale auth state is wiped
     clearAuthCookies(responseStore);
     
@@ -132,6 +103,8 @@ export async function proxy(request: NextRequest) {
     response.cookies.delete("insforge_access_token");
     response.cookies.delete("insforge_refresh_token");
   }
+
+  const path = request.nextUrl.pathname;
 
   // Protect /dashboard route: redirect unauthenticated users to /sign-in
   if (path.startsWith("/dashboard")) {
