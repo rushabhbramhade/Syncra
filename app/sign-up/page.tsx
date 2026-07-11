@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { insforge } from "@/lib/insforge";
+
 import { signUpAction, signInWithGoogleAction } from "@/app/actions";
 import { ArrowRight, AlertCircle, Eye, EyeOff, CheckCircle } from "lucide-react";
 
@@ -31,33 +31,7 @@ export default function SignUp() {
   const [isLoading, setIsLoading] = useState(false);
   const [isOAuthLoading, setIsOAuthLoading] = useState(false);
 
-  // Check if user is already logged in
-  useEffect(() => {
-    async function checkUser() {
-      // Only check user if there is a local session signature.
-      // If none exists, the server proxy has already confirmed they don't have valid cookies.
-      if (typeof window !== "undefined" && !localStorage.getItem("syncra-user-session")) {
-        return;
-      }
-      
-      try {
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Timeout")), 2000)
-        );
-        const { data } = await Promise.race([
-          insforge.auth.getCurrentUser(),
-          timeoutPromise
-        ]) as Awaited<ReturnType<typeof insforge.auth.getCurrentUser>>;
-        
-        if (data?.user) {
-          router.push("/dashboard");
-        }
-      } catch (e) {
-        console.error("Optimistic user check failed:", e);
-      }
-    }
-    checkUser();
-  }, [router]);
+  // Middleware handles redirection if the user is already authenticated.
 
   // Validation functions
   const validateName = (val: string) => {

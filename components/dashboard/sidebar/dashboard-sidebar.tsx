@@ -46,14 +46,14 @@ export function DashboardSidebar({
       >
         <div
           className={`
-            flex-shrink-0 flex items-center justify-center rounded-xl
+            flex-shrink-0 flex items-center justify-center rounded-2xl
             bg-primary text-white font-black shadow-md border-[2px] border-secondary
             transition-all duration-300
-            ${collapsed && !mobileOpen ? "w-10 h-10 text-lg" : "w-9 h-9 text-base"}
+            w-12 h-12
           `}
         >
           <Zap
-            className={collapsed && !mobileOpen ? "w-5 h-5" : "w-[18px] h-[18px]"}
+            className="w-[24px] h-[24px]"
             strokeWidth={2.5}
           />
         </div>
@@ -61,7 +61,7 @@ export function DashboardSidebar({
         {(!collapsed || mobileOpen) && (
           <div className="overflow-hidden min-w-0">
             <p className="font-display font-black text-[19px] tracking-tight text-secondary leading-none">
-              Syncar
+              Syncra
             </p>
             <p className="text-[10px] font-bold text-text-fog uppercase tracking-[0.15em] mt-0.5">
               AI Workspace
@@ -83,24 +83,9 @@ export function DashboardSidebar({
 
       {/* ── Primary Nav ── */}
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1 scrollbar-hide">
-        {PRIMARY_NAV.map((item) => (
+        {PRIMARY_NAV.map((item, idx) => (
           <SidebarNavItem
-            key={item.href}
-            item={item}
-            collapsed={collapsed && !mobileOpen}
-            isActive={isActive(item.href)}
-          />
-        ))}
-
-        {/* Divider */}
-        <div className="!my-4 mx-1">
-          <div className="h-[2px] bg-border-mist rounded-full" />
-        </div>
-
-        {/* Secondary Nav */}
-        {SECONDARY_NAV.map((item) => (
-          <SidebarNavItem
-            key={item.href}
+            key={`${item.href}-primary-${idx}`}
             item={item}
             collapsed={collapsed && !mobileOpen}
             isActive={isActive(item.href)}
@@ -108,8 +93,20 @@ export function DashboardSidebar({
         ))}
       </nav>
 
-      {/* ── Bottom Section ── */}
-      <div className="border-t-[2px] border-border-mist px-3 py-3">
+      {/* ── Bottom Section (Pinned Footer) ── */}
+      <div className="border-t-[2.5px] border-border-mist px-3 py-3 space-y-1 shrink-0 bg-surface-white">
+        {/* Pinned Secondary Nav */}
+        {SECONDARY_NAV.map((item, idx) => (
+          <SidebarNavItem
+            key={`${item.href}-secondary-${idx}`}
+            item={item}
+            collapsed={collapsed && !mobileOpen}
+            isActive={isActive(item.href)}
+          />
+        ))}
+
+        <div className="h-[2px] bg-border-mist rounded-full !my-3 mx-1" />
+
         {/* User profile */}
         <div
           className={`
@@ -117,8 +114,8 @@ export function DashboardSidebar({
             ${collapsed && !mobileOpen ? "justify-center" : ""}
           `}
         >
-          <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-accent-purple flex items-center justify-center text-white">
-            <UserIcon className="w-[18px] h-[18px]" strokeWidth={2} />
+          <div className="flex-shrink-0 w-12 h-12 rounded-2xl bg-gradient-to-br from-primary to-accent-purple flex items-center justify-center text-white shadow-sm">
+            <UserIcon className="w-[24px] h-[24px]" strokeWidth={2} />
           </div>
           {(!collapsed || mobileOpen) && (
             <div className="min-w-0 flex-1">

@@ -1,3 +1,5 @@
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { Navigation } from "@/components/sections/navigation";
 import { Hero } from "@/components/sections/hero";
 import { TrustedBy } from "@/components/sections/trusted-by";
@@ -15,7 +17,14 @@ import { FAQ } from "@/components/sections/faq";
 import { FinalCTA } from "@/components/sections/final-cta";
 import { Footer } from "@/components/layout/footer";
 
-export default function Home() {
+export default async function Home() {
+  const cookieStore = await cookies();
+  const isAuthenticated = cookieStore.has("insforge_access_token");
+
+  if (isAuthenticated) {
+    redirect("/dashboard");
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-background-mist">
       <Navigation />

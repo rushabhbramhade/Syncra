@@ -1,11 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { insforge } from "@/lib/insforge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { syncUserToDatabase, signOutAction } from "@/app/actions";
+import { signOutAction } from "@/app/actions";
 import {
   LogOut,
   User as UserIcon,
@@ -14,66 +13,26 @@ import {
   RefreshCw,
   CloudLightning,
   Sparkles,
-  AlertCircle,
 } from "lucide-react";
 
-interface InsforgeUser {
-  id: string;
-  email: string;
-  profile?: {
-    name?: string;
-    avatar_url?: string;
-  } | null;
-  providers?: string[];
-  emailVerified?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
-}
+// InsforgeUser and DatabaseUser types are provided by useAuth() from auth-provider
 
-interface DatabaseUser {
-  id: string;
-  auth_user_id: string;
-  email: string;
-  full_name: string;
-  avatar_url?: string | null;
-  auth_provider: string;
-  email_verified: boolean;
-  created_at: string | null;
-  last_login_at: string | null;
-}
+import { useAuth } from "@/components/auth-provider";
 
 export default function Dashboard() {
   const router = useRouter();
-  const [user, setUser] = useState<InsforgeUser | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const stored = localStorage.getItem("syncra-user-session");
-        return stored ? JSON.parse(stored) : null;
-      } catch {
-        return null;
-      }
+  
+  // Get centralized auth state
+  const { user, dbUser, isLoading, clearSession, refreshSession } = useAuth();
+
+  // Redirect backstop: if user is not present and loading has finished, do a hard redirect to /sign-in
+  React.useEffect(() => {
+    if (!isLoading && !user) {
+      window.location.href = "/sign-in";
     }
-    return null;
-  });
-  const [dbUser, setDbUser] = useState<DatabaseUser | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const stored = localStorage.getItem("syncra-db-user-session");
-        return stored ? JSON.parse(stored) : null;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
-  const [isLoading, setIsLoading] = useState(() => {
-    if (typeof window !== "undefined") {
-      return !localStorage.getItem("syncra-user-session");
-    }
-    return true;
-  });
+  }, [user, isLoading]);
+  
   const [isSignOutLoading, setIsSignOutLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
 
   // Integrations state
   const [integrations, setIntegrations] = useState<{
@@ -83,86 +42,6 @@ export default function Dashboard() {
     connected: boolean;
     unread: number;
   }[]>([]);
-
-  // Guard: run the session fetch exactly once per mount (protects against React
-  // Strict Mode double-invocation and any future dependency churn).
-  const hasFetched = useRef(false);
-  // Track mount status so we never call setState after unmount.
-  const isMounted = useRef(true);
-
-  // Fetch session and sync user from public.users table
-  const fetchUserSession = useCallback(async () => {
-    if (typeof window === "undefined") return;
-    if (!isMounted.current) return;
-    setErrorMsg("");
-    try {
-      // 5-second timeout to avoid infinite loading if session verification hangs
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Session verification timeout")), 5000)
-      );
-
-      const { data, error } = await Promise.race([
-        insforge.auth.getCurrentUser(),
-        timeoutPromise
-      ]) as Awaited<ReturnType<typeof insforge.auth.getCurrentUser>>;
-
-      if (!isMounted.current) return;
-
-      if (error || !data?.user) {
-        localStorage.removeItem("syncra-user-session");
-        localStorage.removeItem("syncra-db-user-session");
-        // Use router.replace so Next.js does a soft navigation — no full-page
-        // reload that would re-mount this component and re-trigger the fetch.
-        router.replace("/sign-in");
-        return;
-      }
-
-      setUser(data.user);
-      localStorage.setItem("syncra-user-session", JSON.stringify(data.user));
-      setIsLoading(false);
-
-      // Sync and verify user database record via Server Action in the background
-      syncUserToDatabase({
-        auth_user_id: data.user.id,
-        email: data.user.email,
-        full_name: data.user.profile?.name || "New User",
-        avatar_url: data.user.profile?.avatar_url || null,
-        auth_provider: data.user.providers?.[0] || "email",
-        email_verified: data.user.emailVerified || false,
-      }).then((syncedUser) => {
-        if (!isMounted.current) return;
-        setDbUser(syncedUser);
-        localStorage.setItem("syncra-db-user-session", JSON.stringify(syncedUser));
-      }).catch((err) => {
-        console.error("Failed to sync user record in background:", err);
-      });
-    } catch (err: unknown) {
-      if (!isMounted.current) return;
-      const errorObj = err as { message?: string };
-      console.error("getCurrentUser error or timeout:", err);
-      setErrorMsg(errorObj.message || "Failed to fetch session. Please log in again.");
-      localStorage.removeItem("syncra-user-session");
-      localStorage.removeItem("syncra-db-user-session");
-      setIsLoading(false);
-      router.replace("/sign-in");
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router]);
-
-  useEffect(() => {
-    // Prevent double-invocation (React Strict Mode, HMR re-mount, etc.)
-    if (hasFetched.current) return;
-    hasFetched.current = true;
-    isMounted.current = true;
-
-    fetchUserSession();
-
-    return () => {
-      isMounted.current = false;
-    };
-  // Run only on initial mount — fetchUserSession is stable.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Load real integration statuses
   useEffect(() => {
@@ -197,10 +76,7 @@ export default function Dashboard() {
   const handleSignOut = async () => {
     setIsSignOutLoading(true);
     try {
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("syncra-user-session");
-        localStorage.removeItem("syncra-db-user-session");
-      }
+      clearSession();
       const { error } = await signOutAction();
       if (error) {
         console.error("Sign out action error:", error);
@@ -220,18 +96,8 @@ export default function Dashboard() {
     router.push("/dashboard/integrations");
   };
 
-  if (isLoading || !user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background-mist font-sans">
-        <div className="text-center space-y-4">
-          <svg className="animate-spin h-10 w-10 text-primary mx-auto" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <p className="font-bold text-secondary text-lg">Verifying your secure session...</p>
-        </div>
-      </div>
-    );
+  if (!user) {
+    return null; // AuthProvider handles loading state
   }
 
   return (
@@ -250,13 +116,6 @@ export default function Dashboard() {
           <span>Sign Out</span>
         </Button>
       </div>
-
-      {errorMsg && (
-        <div className="mb-8 p-4 bg-error-bg border-[2.5px] border-error rounded-[24px] flex items-center gap-3 text-error font-bold neo-shadow-sm">
-          <AlertCircle className="w-6 h-6 shrink-0" />
-          <p>{errorMsg}</p>
-        </div>
-      )}
 
       {/* Bento Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -351,7 +210,7 @@ export default function Dashboard() {
                     No matching user row was found in the public schema `users` table. Try refreshing or signing in again.
                   </p>
                 </div>
-                <Button variant="secondary" size="sm" onClick={fetchUserSession} className="inline-flex gap-2">
+                <Button variant="secondary" size="sm" onClick={() => refreshSession()} className="inline-flex gap-2">
                   <RefreshCw className="w-4 h-4" />
                   <span>Retry Sync</span>
                 </Button>

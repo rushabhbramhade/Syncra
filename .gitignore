@@ -61,3 +61,7 @@ docs/*.md
 # Google credentials store fallback
 lib/google/gmail-connections.json
 
+# custom dev & test artifacts
+/.next_custom/
+/test-*.js
+/verify-flows.js

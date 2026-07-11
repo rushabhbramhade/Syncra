@@ -145,8 +145,8 @@ export async function signUpAction(userData: { email: string; password: string; 
 
 export async function signOutAction() {
   const cookieStore = await cookies();
-  cookieStore.delete("insforge_access_token");
-  cookieStore.delete("insforge_refresh_token");
+  cookieStore.set("insforge_access_token", "", { path: "/", maxAge: -1 });
+  cookieStore.set("insforge_refresh_token", "", { path: "/", maxAge: -1 });
   
   const auth = createAuthActions({
     baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,

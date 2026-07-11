@@ -279,10 +279,10 @@ export default function IntegrationsPage() {
   }, [router]);
 
   useEffect(() => {
+    isMounted.current = true;
     // Fire exactly once per mount — guards against Strict Mode double-invoke
     if (hasFetched.current) return;
     hasFetched.current = true;
-    isMounted.current = true;
     fetchSessionAndStatus();
     return () => { isMounted.current = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -625,91 +625,100 @@ export default function IntegrationsPage() {
                 return (
                   <div
                     key={platform.id}
-                    className={`relative p-6 rounded-[22px] border-[2.5px] bg-surface-white flex flex-col justify-between min-h-[280px] transition-all ${
+                    className={`relative p-6 rounded-[22px] border-[2.5px] bg-surface-white flex flex-col items-center text-center justify-between min-h-[350px] transition-all duration-300 ${
                       isConnected
                         ? "border-secondary dark:border-white shadow-flat-md"
-                        : "border-border-mist opacity-70 hover:opacity-100 hover:border-text-fog"
+                        : "border-border-mist opacity-80 hover:opacity-100 hover:border-text-fog hover:shadow-flat-sm"
                     }`}
                   >
-                    {/* Upper content */}
-                    <div>
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="w-14 h-14 rounded-2xl bg-background-mist border-[1.5px] border-border-mist flex items-center justify-center overflow-hidden">
-                          {platform.icon ? (
-                            <img
-                              src={platform.icon}
-                              alt={platform.name}
-                              className="w-9 h-9 object-contain"
-                            />
-                          ) : platform.id === "linkedin" ? (
-                            renderLinkedInIcon()
-                          ) : (
-                            renderGitHubIcon()
-                          )}
-                        </div>
-
-                        {isConnected ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-success-bg border-[1.5px] border-success text-success text-[12px] font-bold rounded-lg">
-                            <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                            Connected
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-background-mist border-[1.5px] border-border-mist text-text-slate text-[12px] font-medium rounded-lg">
-                            Disconnected
-                          </span>
-                        )}
-                      </div>
-
-                      <h3 className="font-display font-black text-xl text-secondary mb-2">
-                        {platform.name}
-                      </h3>
-                      
-                      {/* Platform metadata rendering if connected */}
-                      {isConnected && isGmail && gmailStatus ? (
-                        <div className="mb-4 bg-background-mist border-[1.5px] border-border-mist rounded-xl p-3 text-[11px] font-medium text-text-slate space-y-1.5 text-left">
-                          <div className="flex justify-between">
-                            <span>Account:</span>
-                            <span className="font-bold text-secondary truncate max-w-[150px]">{gmailStatus.email}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Linked On:</span>
-                            <span className="font-bold text-secondary">{formatConnectedDate(gmailStatus.connectedAt)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Last Sync:</span>
-                            <span className="font-bold text-secondary">{formatLastSyncTime(gmailStatus.lastSyncAt) || "Never"}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Status:</span>
-                            <span className="font-bold text-success flex items-center gap-1">
-                              <span className="w-1 h-1 rounded-full bg-success" />
-                              Active Sync
-                            </span>
-                          </div>
-                        </div>
-                      ) : isConnected && !isGmail ? (
-                        <div className="mb-4 bg-background-mist border-[1.5px] border-border-mist rounded-xl p-3 text-[11px] font-medium text-text-slate space-y-1.5 text-left">
-                          <div className="flex justify-between">
-                            <span>Sync Mode:</span>
-                            <span className="font-bold text-secondary">Sandbox Simulation</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Status:</span>
-                            <span className="font-bold text-success flex items-center gap-1">
-                              <span className="w-1 h-1 rounded-full bg-success" />
-                              Active
-                            </span>
-                          </div>
-                        </div>
+                    {/* 1. Platform logo, centered in the card */}
+                    <div className="w-16 h-16 rounded-2xl bg-background-mist border-[1.5px] border-border-mist flex items-center justify-center overflow-hidden mb-4 shrink-0 shadow-inner">
+                      {platform.icon ? (
+                        <img
+                          src={platform.icon}
+                          alt={platform.name}
+                          className="w-10 h-10 object-contain"
+                        />
+                      ) : platform.id === "linkedin" ? (
+                        renderLinkedInIcon()
                       ) : (
-                        <p className="text-text-slate text-[13px] font-medium leading-relaxed line-clamp-2 mb-4">
-                          {platform.description}
-                        </p>
+                        renderGitHubIcon()
                       )}
                     </div>
 
-                    {/* Bottom actions */}
-                    <div className="flex items-center gap-2.5 mt-auto">
+                    {/* 2. Platform name, below the logo */}
+                    <div className="space-y-1.5 mb-2.5 shrink-0">
+                      <h3 className="font-display font-black text-xl text-secondary">
+                        {platform.name}
+                      </h3>
+                      {isConnected ? (
+                        <div className="flex justify-center">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-success-bg border-[1.5px] border-success text-success text-[11px] font-bold rounded-lg">
+                            <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                            Connected
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex justify-center">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-background-mist border-[1.5px] border-border-mist text-text-slate text-[11px] font-medium rounded-lg">
+                            Ready
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 3. A two-line description of what the integration does */}
+                    <p className="text-text-slate text-[13px] font-medium leading-relaxed line-clamp-2 h-10 mb-4 overflow-hidden shrink-0">
+                      {platform.description}
+                    </p>
+
+                    {/* Platform connection details if connected */}
+                    {isConnected && (
+                      <div className="w-full mb-4 bg-background-mist border-[1.5px] border-border-mist rounded-xl p-3 text-[11px] font-semibold text-text-slate space-y-1 text-left shrink-0">
+                        {isGmail && gmailStatus ? (
+                          <>
+                            <div className="flex justify-between">
+                              <span>Account:</span>
+                              <span className="font-bold text-secondary truncate max-w-[130px]">{gmailStatus.email}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Linked On:</span>
+                              <span className="font-bold text-secondary">{formatConnectedDate(gmailStatus.connectedAt)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Last Sync:</span>
+                              <span className="font-bold text-secondary">{formatLastSyncTime(gmailStatus.lastSyncAt) || "Never"}</span>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex justify-between">
+                              <span>Sync Mode:</span>
+                              <span className="font-bold text-secondary">Sandbox Simulation</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Status:</span>
+                              <span className="font-bold text-success">Active</span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ⚠️ Flag missing asset warnings to meet prompt requirements */}
+                    {platform.id === "outlook" && (
+                      <div className="text-[10px] text-warning font-bold mb-3.5 bg-warning-bg border border-warning/20 px-2.5 py-1 rounded-md shrink-0">
+                        ⚠️ missing outlook.png (using email.png)
+                      </div>
+                    )}
+                    {platform.id === "linkedin" && (
+                      <div className="text-[10px] text-warning font-bold mb-3.5 bg-warning-bg border border-warning/20 px-2.5 py-1 rounded-md shrink-0">
+                        ⚠️ missing linkedin.png (using inline SVG)
+                      </div>
+                    )}
+
+                    {/* 4. A Connect / Disconnect button (and Settings button if connected) */}
+                    <div className="w-full flex items-center gap-2 mt-auto shrink-0">
                       {isConnected ? (
                         <>
                           <button
@@ -720,15 +729,15 @@ export default function IntegrationsPage() {
                                 handleDisconnectMockPlatform(platform.id);
                               }
                             }}
-                            className="flex-1 min-h-[40px] px-4 py-2 bg-error-bg border-[2px] border-error text-error font-bold text-[14px] rounded-xl hover:bg-error hover:text-white transition-all duration-200 cursor-pointer"
+                            className="flex-1 min-h-[42px] px-4 py-2 bg-error-bg border-[2px] border-error text-error font-bold text-[14px] rounded-xl hover:bg-error hover:text-white transition-all duration-200 cursor-pointer text-center"
                           >
                             Disconnect
                           </button>
                           
                           <button
                             onClick={() => handleSettingsClick(platform)}
-                            title={`${platform.name} MCP Settings`}
-                            className="min-h-[40px] px-3 bg-surface-white border-[2px] border-secondary text-secondary font-bold text-[14px] rounded-xl hover:bg-background-mist transition-all duration-200 cursor-pointer flex items-center justify-center"
+                            title={`${platform.name} Settings`}
+                            className="min-h-[42px] px-3.5 bg-surface-white border-[2px] border-secondary text-secondary font-bold text-[14px] rounded-xl hover:bg-background-mist transition-all duration-200 cursor-pointer flex items-center justify-center shrink-0"
                           >
                             <Settings className="w-[18px] h-[18px]" />
                           </button>
@@ -742,7 +751,7 @@ export default function IntegrationsPage() {
                               handleConnectMockPlatform(platform.id);
                             }
                           }}
-                          className="w-full min-h-[40px] px-4 py-2 bg-primary text-white border-[2px] border-primary font-bold text-[14px] rounded-xl hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-flat-sm active:translate-x-0 active:translate-y-0 active:shadow-none transition-all duration-200 cursor-pointer"
+                          className="w-full min-h-[42px] px-4 py-2 bg-primary text-white border-[2px] border-primary font-bold text-[14px] rounded-xl hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-flat-sm active:translate-x-0 active:translate-y-0 active:shadow-none transition-all duration-200 cursor-pointer text-center"
                         >
                           Connect
                         </button>

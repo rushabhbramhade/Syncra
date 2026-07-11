@@ -14,5 +14,6 @@ if (!anonKey) {
 export const insforge = createBrowserClient({
   baseUrl,
   anonKey,
+  refreshUrl: "/api/auth/refresh",
 });
 

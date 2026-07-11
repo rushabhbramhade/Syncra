@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { DashboardSidebar } from "@/components/dashboard/sidebar";
 import { DashboardTopNav } from "@/components/dashboard/top-nav";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AuthProvider } from "@/components/auth-provider";
 
 const SIDEBAR_KEY = "syncra-sidebar-collapsed";
 
@@ -98,29 +99,31 @@ export default function DashboardLayout({
   }
 
   return (
-    <ThemeProvider>
-      <div className="flex h-screen overflow-hidden bg-background-mist font-sans">
-        {/* ── Sidebar ── */}
-        <DashboardSidebar
-          collapsed={collapsed}
-          onToggle={toggleCollapsed}
-          mobileOpen={mobileOpen}
-          onMobileClose={closeMobile}
-        />
+    <AuthProvider>
+      <ThemeProvider>
+        <div className="flex h-screen overflow-hidden bg-background-mist font-sans">
+          {/* ── Sidebar ── */}
+          <DashboardSidebar
+            collapsed={collapsed}
+            onToggle={toggleCollapsed}
+            mobileOpen={mobileOpen}
+            onMobileClose={closeMobile}
+          />
 
-        {/* ── Main Content Area ── */}
-        <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          {/* Top navigation */}
-          <DashboardTopNav onMobileMenuOpen={openMobile} />
+          {/* ── Main Content Area ── */}
+          <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+            {/* Top navigation */}
+            <DashboardTopNav onMobileMenuOpen={openMobile} />
 
-          {/* Scrollable page content */}
-          <main className="flex-1 overflow-y-auto">
-            <div className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8 max-w-[1440px] mx-auto">
-              {children}
-            </div>
-          </main>
+            {/* Scrollable page content */}
+            <main className="flex-1 overflow-y-auto">
+              <div className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8 max-w-[1440px] mx-auto">
+                {children}
+              </div>
+            </main>
+          </div>
         </div>
-      </div>
-    </ThemeProvider>
+      </ThemeProvider>
+    </AuthProvider>
   );
 }

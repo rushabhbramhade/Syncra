@@ -10,6 +10,24 @@ export function Hero() {
   
   // Parallax effect variables
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const hasSession = !!localStorage.getItem("syncra-user-session");
+      const hasCookie = document.cookie.includes("insforge_access_token");
+      const isAuth = hasSession && hasCookie;
+      
+      setTimeout(() => {
+        if (hasSession && !hasCookie) {
+          localStorage.removeItem("syncra-user-session");
+          localStorage.removeItem("syncra-db-user-session");
+        }
+        setIsAuthenticated(isAuth);
+      }, 0);
+    }
+  }, []);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -64,15 +82,15 @@ export function Hero() {
 
           {/* Subheading */}
           <p className="font-sans text-text-slate text-lg md:text-[20px] leading-relaxed mb-8 max-w-[540px]">
-            Syncar connects Gmail, Outlook, WhatsApp, Telegram, Slack, and Discord. 
+            Syncra connects Gmail, Outlook, WhatsApp, Telegram, Slack, and Discord. 
             AI summarizes your conversations, surfaces priorities, and generates replies so you never check multiple apps again.
           </p>
 
           {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
-            <Link href="/sign-up" className="w-full sm:w-auto">
+            <Link href={isAuthenticated ? "/dashboard" : "/sign-up"} className="w-full sm:w-auto">
               <Button variant="primary" size="lg" className="group w-full sm:w-auto">
-                <span>Start Syncing Free</span>
+                <span>{isAuthenticated ? "Go to Dashboard" : "Start Syncing Free"}</span>
                 <ArrowRight className="w-5 h-5 ml-2 transition-transform group-hover:translate-x-1.5" />
               </Button>
             </Link>

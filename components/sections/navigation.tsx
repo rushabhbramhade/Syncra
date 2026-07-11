@@ -9,6 +9,24 @@ export function Navigation() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const hasSession = !!localStorage.getItem("syncra-user-session");
+      const hasCookie = document.cookie.includes("insforge_access_token");
+      const isAuth = hasSession && hasCookie;
+      
+      setTimeout(() => {
+        if (hasSession && !hasCookie) {
+          localStorage.removeItem("syncra-user-session");
+          localStorage.removeItem("syncra-db-user-session");
+        }
+        setIsAuthenticated(isAuth);
+      }, 0);
+    }
+  }, []);
+
   useEffect(() => {
     const handleScroll = () => {
       if (window.scrollY > 8) {
@@ -41,7 +59,7 @@ export function Navigation() {
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2.5 focus-visible:ring-2 focus-visible:ring-primary rounded-lg outline-none">
           <span className="font-display font-black text-[22px] tracking-tight text-secondary">
-            Syncar
+            Syncra
           </span>
         </Link>
 
@@ -60,17 +78,28 @@ export function Navigation() {
 
         {/* Desktop CTAs */}
         <div className="hidden md:flex items-center gap-4">
-          <Link href="/sign-in" passHref>
-            <Button variant="ghost" size="sm">
-              Sign In
-            </Button>
-          </Link>
-          <Link href="/sign-up" passHref>
-            <Button variant="primary" size="sm" className="group">
-              <span>Get Started</span>
-              <ArrowRight className="w-4 h-4 ml-1.5 transition-transform group-hover:translate-x-1" />
-            </Button>
-          </Link>
+          {isAuthenticated ? (
+            <Link href="/dashboard" passHref>
+              <Button variant="primary" size="sm" className="group">
+                <span>Go to Dashboard</span>
+                <ArrowRight className="w-4 h-4 ml-1.5 transition-transform group-hover:translate-x-1" />
+              </Button>
+            </Link>
+          ) : (
+            <>
+              <Link href="/sign-in" passHref>
+                <Button variant="ghost" size="sm">
+                  Sign In
+                </Button>
+              </Link>
+              <Link href="/sign-up" passHref>
+                <Button variant="primary" size="sm" className="group">
+                  <span>Get Started</span>
+                  <ArrowRight className="w-4 h-4 ml-1.5 transition-transform group-hover:translate-x-1" />
+                </Button>
+              </Link>
+            </>
+          )}
         </div>
 
         {/* Mobile Hamburger Menu button */}
@@ -100,16 +129,26 @@ export function Navigation() {
           </nav>
 
           <div className="flex flex-col gap-4 mt-8">
-            <Link href="/sign-in" passHref className="w-full">
-              <Button variant="secondary" size="lg" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
-                Sign In
-              </Button>
-            </Link>
-            <Link href="/sign-up" passHref className="w-full">
-              <Button variant="primary" size="lg" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
-                Get Started Free
-              </Button>
-            </Link>
+            {isAuthenticated ? (
+              <Link href="/dashboard" passHref className="w-full">
+                <Button variant="primary" size="lg" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
+                  Go to Dashboard
+                </Button>
+              </Link>
+            ) : (
+              <>
+                <Link href="/sign-in" passHref className="w-full">
+                  <Button variant="secondary" size="lg" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
+                    Sign In
+                  </Button>
+                </Link>
+                <Link href="/sign-up" passHref className="w-full">
+                  <Button variant="primary" size="lg" className="w-full" onClick={() => setIsMobileMenuOpen(false)}>
+                    Get Started Free
+                  </Button>
+                </Link>
+              </>
+            )}
           </div>
         </div>
       )}
