@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState } from "react";
-import { Card } from "@/components/ui/card";
 import { Sparkles, MessageSquare, Mail, Layers, FileText, CheckSquare, Zap } from "lucide-react";
 
 export function Solution() {

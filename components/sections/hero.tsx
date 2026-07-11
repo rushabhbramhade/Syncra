@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Mail, MessageSquare, ShieldAlert, Sparkles, Inbox, Check } from "lucide-react";
-import { motion, useMotionValue, useTransform } from "framer-motion";
+import { ArrowRight, Sparkles, Inbox, Check } from "lucide-react";
 
 export function Hero() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -70,13 +70,17 @@ export function Hero() {
 
           {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
-            <Button variant="primary" size="lg" className="group w-full sm:w-auto">
-              <span>Start Syncing Free</span>
-              <ArrowRight className="w-5 h-5 ml-2 transition-transform group-hover:translate-x-1.5" />
-            </Button>
-            <Button variant="secondary" size="lg" className="w-full sm:w-auto">
-              Book Demo
-            </Button>
+            <Link href="/sign-up" className="w-full sm:w-auto">
+              <Button variant="primary" size="lg" className="group w-full sm:w-auto">
+                <span>Start Syncing Free</span>
+                <ArrowRight className="w-5 h-5 ml-2 transition-transform group-hover:translate-x-1.5" />
+              </Button>
+            </Link>
+            <Link href="#pricing" className="w-full sm:w-auto">
+              <Button variant="secondary" size="lg" className="w-full sm:w-auto">
+                Book Demo
+              </Button>
+            </Link>
           </div>
 
           {/* Inline proof banner */}
@@ -124,7 +128,7 @@ export function Hero() {
               <span className="font-mono text-[11px] text-text-muted">10m ago</span>
             </div>
             <p className="font-sans font-bold text-sm text-secondary truncate">Confirming launch dates for v2...</p>
-            <p className="font-sans text-xs text-text-slate mt-1 line-clamp-1">AI suggestion: Reply "Sounds good!"</p>
+            <p className="font-sans text-xs text-text-slate mt-1 line-clamp-1">AI suggestion: Reply &quot;Sounds good!&quot;</p>
           </div>
 
           {/* Floating Platform 2: WhatsApp Card */}

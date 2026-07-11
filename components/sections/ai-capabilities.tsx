@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { Sparkles, Brain, Search, Clock, FileText, CheckCircle, ArrowRight } from "lucide-react";
+import { Sparkles, Brain, Search, Clock, FileText } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 
 export function AICapabilities() {
   const [activeTab, setActiveTab] = useState(0);
@@ -59,7 +58,7 @@ export function AICapabilities() {
       preview: (
         <div className="flex flex-col gap-2 font-sans text-xs">
           <div className="bg-secondary text-white p-2.5 rounded-lg font-mono text-[11px] flex justify-between">
-            <span>Query: "Acme budget proposal"</span>
+            <span>Query: &quot;Acme budget proposal&quot;</span>
             <span className="text-accent-yellow">Searching...</span>
           </div>
           <div className="space-y-1.5">
@@ -68,7 +67,7 @@ export function AICapabilities() {
               <span className="font-mono text-[10px] text-accent-orange">Gmail</span>
             </div>
             <div className="bg-white p-2.5 rounded-lg border border-border-mist flex justify-between items-center">
-              <span>💬 'Jason agreed on $12K cap'</span>
+              <span>💬 &apos;Jason agreed on $12K cap&apos;</span>
               <span className="font-mono text-[10px] text-accent-pink">Slack</span>
             </div>
           </div>

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { insforge } from "@/lib/insforge";
+import { signInAction, signInWithGoogleAction } from "@/app/actions";
 import { ArrowRight, AlertCircle, Eye, EyeOff } from "lucide-react";
 
 export default function SignIn() {
@@ -26,9 +27,26 @@ export default function SignIn() {
   // Check if user is already logged in
   useEffect(() => {
     async function checkUser() {
-      const { data } = await insforge.auth.getCurrentUser();
-      if (data?.user) {
-        router.push("/dashboard");
+      // Only check user if there is a local session signature.
+      // If none exists, the server proxy has already confirmed they don't have valid cookies.
+      if (typeof window !== "undefined" && !localStorage.getItem("syncra-user-session")) {
+        return;
+      }
+      
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Timeout")), 2000)
+        );
+        const { data } = await Promise.race([
+          insforge.auth.getCurrentUser(),
+          timeoutPromise
+        ]) as Awaited<ReturnType<typeof insforge.auth.getCurrentUser>>;
+        
+        if (data?.user) {
+          router.push("/dashboard");
+        }
+      } catch (e) {
+        console.error("Optimistic user check failed:", e);
       }
     }
     checkUser();
@@ -105,14 +123,11 @@ export default function SignIn() {
     setIsLoading(true);
 
     try {
-      const { data, error } = await insforge.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { data, error } = await signInAction(email, password);
 
       if (error) {
         // Look for structured error details from the InsForge SDK
-        const errObj = error as any;
+        const errObj = error as { error?: string; message?: string };
         if (errObj.error === "AUTH_NEED_VERIFICATION") {
           setFormError("Your email is not verified yet. Redirecting to verification page...");
           setTimeout(() => {
@@ -121,13 +136,17 @@ export default function SignIn() {
         } else {
           setFormError(errObj.message || "Invalid login credentials. Please try again.");
         }
-      } else if (data?.accessToken) {
+      } else if (data?.user) {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("syncra-user-session", JSON.stringify(data.user));
+        }
         router.push("/dashboard");
       } else {
         setFormError("An unexpected error occurred during sign in.");
       }
-    } catch (err: any) {
-      setFormError(err.message || "Network error. Please try again.");
+    } catch (err: unknown) {
+      const errorObj = err as { message?: string };
+      setFormError(errorObj.message || "Network error. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -139,19 +158,19 @@ export default function SignIn() {
     setIsOAuthLoading(true);
 
     try {
-      const redirectUrl = window.location.origin + "/dashboard";
-      const { error } = await insforge.auth.signInWithOAuth("google", {
-        redirectTo: redirectUrl,
-        additionalParams: { prompt: "select_account" },
-      });
+      const redirectUrl = window.location.origin + "/api/auth/callback";
+      const result = await signInWithGoogleAction(redirectUrl);
 
-      if (error) {
-        setFormError(error.message || "Failed to initialize Google Sign-In.");
+      if (result && result.error) {
+        setFormError(result.error.message || "Failed to initialize Google Sign-In.");
         setIsOAuthLoading(false);
       }
-      // If successful, the browser will auto-redirect as configured in the SDK
-    } catch (err: any) {
-      setFormError(err.message || "Failed to redirect to Google.");
+    } catch (err: unknown) {
+      const errorObj = err as { message?: string; digest?: string };
+      if (errorObj.message?.includes("NEXT_REDIRECT") || errorObj.digest?.startsWith("NEXT_REDIRECT")) {
+        throw err;
+      }
+      setFormError(errorObj.message || "Failed to redirect to Google.");
       setIsOAuthLoading(false);
     }
   };
@@ -329,7 +348,7 @@ export default function SignIn() {
           </div>
 
           <p className="text-center text-[14px] font-medium text-slate-500">
-            Don't have an account?{" "}
+            Don&apos;t have an account?{" "}
             <Link
               href="/sign-up"
               className="font-bold text-[#4f46e5] hover:underline outline-none"

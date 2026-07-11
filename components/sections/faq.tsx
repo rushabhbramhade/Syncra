@@ -2,7 +2,6 @@
 
 import React, { useState } from "react";
 import { ChevronDown, HelpCircle } from "lucide-react";
-import { Card } from "@/components/ui/card";
 
 export function FAQ() {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
@@ -79,7 +78,7 @@ export function FAQ() {
                 {/* Answer Area (Accordion body) */}
                 <div
                   className={`transition-all duration-300 ease-in-out ${
-                    isOpen ? "max-h-[200px] border-t-[2.5px] border-secondary" : "max-h-0 pointer-events-none"
+                    isOpen ? "max-h-[500px] border-t-[2.5px] border-secondary" : "max-h-0 pointer-events-none"
                   }`}
                 >
                   <p className="font-sans text-[15px] text-text-slate leading-relaxed p-6 bg-background-mist/50">

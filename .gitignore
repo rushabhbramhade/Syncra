@@ -57,3 +57,7 @@ docs/*.md
 .roo
 .trae
 .windsurf
+
+# Google credentials store fallback
+lib/google/gmail-connections.json
+

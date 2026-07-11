@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Sparkles } from "lucide-react";
 
@@ -10,8 +11,8 @@ export function FinalCTA() {
         {/* Banner Card */}
         <div className="bg-primary text-white rounded-[28px] neo-border neo-shadow-lg p-10 md:p-16 relative overflow-hidden flex flex-col items-center max-w-[960px] mx-auto">
           {/* Background shapes (Surrealist editorial style) */}
-          <div className="absolute top-0 right-0 w-36 h-36 rounded-full bg-accent-yellow/20 -mr-10 -mt-10 blur-xl pointer-events-none" />
-          <div className="absolute bottom-0 left-0 w-44 h-44 rounded-full bg-accent-purple/20 -ml-16 -mb-16 blur-xl pointer-events-none" />
+          <div aria-hidden="true" className="absolute top-0 right-0 w-36 h-36 rounded-full bg-accent-yellow/20 -mr-10 -mt-10 blur-xl pointer-events-none" />
+          <div aria-hidden="true" className="absolute bottom-0 left-0 w-44 h-44 rounded-full bg-accent-purple/20 -ml-16 -mb-16 blur-xl pointer-events-none" />
 
           {/* Icon */}
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full neo-border bg-accent-yellow text-secondary font-mono text-[13px] font-bold neo-shadow-sm mb-8 z-10">
@@ -30,10 +31,12 @@ export function FinalCTA() {
           </p>
 
           {/* Button */}
-          <Button variant="secondary" size="lg" className="group z-10 neo-border border-secondary">
-            <span>Start Free Syncing</span>
-            <ArrowRight className="w-5 h-5 ml-2 transition-transform group-hover:translate-x-1.5" />
-          </Button>
+          <Link href="/sign-up" className="z-10">
+            <Button variant="secondary" size="lg" className="group z-10 neo-border border-secondary">
+              <span>Start Free Syncing</span>
+              <ArrowRight className="w-5 h-5 ml-2 transition-transform group-hover:translate-x-1.5" />
+            </Button>
+          </Link>
 
           {/* Proof checklist */}
           <div className="flex flex-wrap justify-center gap-6 mt-8 font-mono text-xs text-white/70 z-10">

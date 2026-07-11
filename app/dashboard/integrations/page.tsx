@@ -1,38 +1,81 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { insforge } from "@/lib/insforge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
 import {
+  getGmailConnectionStatus,
+  disconnectGmailConnection,
+  executeGmailMCPAction,
+  checkGoogleApiConfig,
+  getProviderTools,
+  ConnectionStatus
+} from "@/app/actions/integrations";
+import {
   Mail,
-  MessageSquare,
-  MessageCircle,
   Settings,
   ShieldCheck,
   CheckCircle2,
-  Power,
-  Terminal,
   Sliders,
   Search,
-  ArrowRight,
-  CornerDownRight,
   AlertCircle,
   X,
   RefreshCw,
   Send,
   Plus,
   FileText,
-  Check,
   Loader2,
-  ExternalLink,
   Lock,
-  Unlock,
   AlertTriangle,
-  Info
+  Info,
+  Trash2,
+  Archive,
+  CornerUpLeft,
+  Paperclip,
+  ExternalLink
 } from "lucide-react";
+
+interface InsforgeUser {
+  id: string;
+  email: string;
+  profile?: {
+    name?: string;
+    avatar_url?: string;
+  } | null;
+  providers?: string[];
+  emailVerified: boolean;
+}
+
+interface Platform {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  hasOAuth: boolean;
+}
+
+interface GmailInboxEmail {
+  id: string;
+  threadId?: string;
+  from: string;
+  to: string;
+  subject: string;
+  date: string;
+  snippet: string;
+  unread: boolean;
+}
+
+interface GmailEmailDetails {
+  from: string;
+  to: string;
+  date: string;
+  subject: string;
+  body: string;
+  
+}
 
 // Platforms list with details
 const PLATFORMS = [
@@ -96,35 +139,57 @@ const PLATFORMS = [
 
 export default function IntegrationsPage() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const searchParams = useSearchParams();
+  
+  const [user, setUser] = useState<InsforgeUser | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("syncra-user-session");
+        return stored ? JSON.parse(stored) : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+  const [isLoading, setIsLoading] = useState(() => {
+    if (typeof window !== "undefined") {
+      return !localStorage.getItem("syncra-user-session");
+    }
+    return true;
+  });
 
-  // Connection states (persistent via localStorage)
-  const [connectedPlatforms, setConnectedPlatforms] = useState<string[]>([]);
+  // Guard: run the session fetch exactly once per mount.
+  const hasFetched = useRef(false);
+  // Track mount status so we never call setState after unmount.
+  const isMounted = useRef(true);
+
+  // Connection metadata loaded from DB
+  const [gmailStatus, setGmailStatus] = useState<ConnectionStatus | null>(null);
+  
+  // Non-Gmail mock connections (loaded from localStorage for prototype integration)
+  const [mockConnectedList, setMockConnectedList] = useState<string[]>([]);
   
   // Gmail Inbox States
   const [gmailQuery, setGmailQuery] = useState("is:unread");
-  const [gmailLimit, setGmailLimit] = useState(5);
-  const [gmailInboxData, setGmailInboxData] = useState<any>(null);
-  const [selectedInboxEmail, setSelectedInboxEmail] = useState<any>(null);
+  const [gmailLimit] = useState(5);
+  const [gmailInboxData, setGmailInboxData] = useState<GmailInboxEmail[] | null>(null);
+  const [selectedInboxEmail, setSelectedInboxEmail] = useState<string | null>(null);
   const [emailDetailLoading, setEmailDetailLoading] = useState(false);
-  const [emailDetails, setEmailDetails] = useState<any>(null);
+  const [emailDetails, setEmailDetails] = useState<GmailEmailDetails | null>(null);
+  const [isInboxRefreshing, setIsInboxRefreshing] = useState(false);
 
-  // Modal / Dialog States
-  const [showOAuthModal, setShowOAuthModal] = useState(false);
-  const [oauthPlatform, setOauthPlatform] = useState<any>(null);
-  const [isOauthConnecting, setIsOauthConnecting] = useState(false);
-  const [oauthStep, setOauthStep] = useState(1); // 1 = scope consent, 2 = connection progress
-
-  // Settings Modal / MCP Explorer States
+  // Settings / MCP Explorer States
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [settingsPlatform, setSettingsPlatform] = useState<any>(null);
-  const [selectedTool, setSelectedTool] = useState<MCPTool | null>(null);
-  const [toolArguments, setToolArguments] = useState<Record<string, any>>({});
-  const [toolMcpRequest, setToolMcpRequest] = useState<string>("");
-  const [toolMcpResponse, setToolMcpResponse] = useState<string>("");
-  const [isExecutingTool, setIsExecutingTool] = useState(false);
-  const [execStatusMsg, setExecStatusMsg] = useState("");
+  const [settingsPlatform, setSettingsPlatform] = useState<Platform | null>(null);
+  const [settingsTools, setSettingsTools] = useState<MCPTool[] | null>(null);
+  const [enabledTools, setEnabledTools] = useState<Record<string, boolean>>({});
+
+  // Developer Alert State
+  const [isGoogleConfiguredOnServer, setIsGoogleConfiguredOnServer] = useState(true);
+  const [showConfigAlertModal, setShowConfigAlertModal] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Gmail Compose Mock States
   const [showComposeModal, setShowComposeModal] = useState(false);
@@ -133,228 +198,310 @@ export default function IntegrationsPage() {
   const [composeBody, setComposeBody] = useState("");
   const [isSendingEmail, setIsSendingEmail] = useState(false);
 
-  // Authenticate user session
-  useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const { data, error } = await insforge.auth.getCurrentUser();
-        if (error || !data?.user) {
-          router.push("/sign-in");
-          return;
-        }
-        setUser(data.user);
-
-        // Load connections from localStorage
-        const stored = localStorage.getItem("syncra-connected-platforms");
-        if (stored) {
-          try {
-            setConnectedPlatforms(JSON.parse(stored));
-          } catch (e) {
-            console.error("Failed to parse connected platforms:", e);
-          }
-        } else {
-          // Default mock connections matching Dashboard page
-          const defaults = ["gmail", "slack"];
-          setConnectedPlatforms(defaults);
-          localStorage.setItem("syncra-connected-platforms", JSON.stringify(defaults));
-        }
-      } catch (err) {
-        console.error(err);
-        router.push("/sign-in");
-      } finally {
-        setIsLoading(false);
+  // Fetch session, then load page data — errors in data loading are isolated
+  // and never treated as "session invalid".
+  const fetchSessionAndStatus = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    if (!isMounted.current) return;
+    try {
+      // ── Step 1: Verify session (auth failure → redirect, nothing else does) ──
+      const { data, error } = await insforge.auth.getCurrentUser();
+      if (!isMounted.current) return;
+      if (error || !data?.user) {
+        localStorage.removeItem("syncra-user-session");
+        localStorage.removeItem("syncra-db-user-session");
+        router.replace("/sign-in");
+        return;
       }
-    };
-    checkSession();
+      setUser(data.user);
+      localStorage.setItem("syncra-user-session", JSON.stringify(data.user));
+      const userId = data.user.id;
+
+      // ── Step 2: Load page data — failures here show inline errors, never redirect ──
+      try {
+        const [gmailConn, isConfigured] = await Promise.all([
+          getGmailConnectionStatus(userId),
+          checkGoogleApiConfig(),
+        ]);
+        if (!isMounted.current) return;
+        setGmailStatus(gmailConn);
+        setIsGoogleConfiguredOnServer(isConfigured);
+      } catch (dataErr) {
+        // Data load failed — log it but do NOT redirect or wipe session
+        console.error("[Integrations] Failed to load connection data:", dataErr);
+      }
+
+      // Load mock integration list from localStorage
+      if (!isMounted.current) return;
+      const stored = localStorage.getItem("syncra-mock-connected-platforms");
+      if (stored) {
+        try {
+          setMockConnectedList(JSON.parse(stored));
+        } catch {
+          const defaults = ["slack"];
+          setMockConnectedList(defaults);
+          localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(defaults));
+        }
+      } else {
+        const defaults = ["slack"];
+        setMockConnectedList(defaults);
+        localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(defaults));
+      }
+
+      // Load enabled/disabled tools toggles
+      const storedTools = localStorage.getItem("syncra-enabled-mcp-tools");
+      if (storedTools) {
+        try {
+          setEnabledTools(JSON.parse(storedTools));
+        } catch {
+          const defaultTools: Record<string, boolean> = {};
+          Object.values(PLATFORM_MCP_TOOLS).flat().forEach(t => { defaultTools[t.name] = true; });
+          setEnabledTools(defaultTools);
+          localStorage.setItem("syncra-enabled-mcp-tools", JSON.stringify(defaultTools));
+        }
+      } else {
+        const defaultTools: Record<string, boolean> = {};
+        Object.values(PLATFORM_MCP_TOOLS).flat().forEach(t => { defaultTools[t.name] = true; });
+        setEnabledTools(defaultTools);
+        localStorage.setItem("syncra-enabled-mcp-tools", JSON.stringify(defaultTools));
+      }
+    } catch (err) {
+      // Only unhandled auth-level errors reach here
+      if (!isMounted.current) return;
+      console.error("[Integrations] Auth check failed:", err);
+      localStorage.removeItem("syncra-user-session");
+      localStorage.removeItem("syncra-db-user-session");
+      router.replace("/sign-in");
+    } finally {
+      if (isMounted.current) setIsLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
-  // Handle Gmail Inbox updates when Gmail is connected
   useEffect(() => {
-    if (connectedPlatforms.includes("gmail")) {
-      fetchGmailInbox();
-    } else {
-      setGmailInboxData(null);
-    }
-  }, [connectedPlatforms, gmailQuery, gmailLimit]);
+    // Fire exactly once per mount — guards against Strict Mode double-invoke
+    if (hasFetched.current) return;
+    hasFetched.current = true;
+    isMounted.current = true;
+    fetchSessionAndStatus();
+    return () => { isMounted.current = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const fetchGmailInbox = () => {
+  // Handle URL query parameters for callback notifications
+  useEffect(() => {
+    const success = searchParams.get("success");
+    const error = searchParams.get("error");
+    
+    if (success === "gmail") {
+      const timer = setTimeout(() => {
+        setSuccessMessage("Gmail connected successfully using Google OAuth 2.0!");
+        router.replace("/dashboard/integrations");
+      }, 0);
+      return () => clearTimeout(timer);
+    } else if (error) {
+      const timer = setTimeout(() => {
+        if (error === "missing_credentials") {
+          setErrorMessage("Google OAuth credentials are not configured on the server. Please check .env.local.");
+        } else {
+          setErrorMessage(`OAuth authentication failed: ${decodeURIComponent(error)}`);
+        }
+        router.replace("/dashboard/integrations");
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams, router]);
+
+  // Fetch Gmail inbox via MCP
+  const loadGmailInbox = useCallback(async () => {
+    if (!user || !gmailStatus) return;
+    setIsInboxRefreshing(true);
     try {
-      const tool = PLATFORM_MCP_TOOLS.gmail.find(t => t.name === "gmail_search_emails");
-      if (tool) {
-        const result = tool.execute({ query: gmailQuery, limit: gmailLimit });
-        setGmailInboxData(result);
+      const response = await executeGmailMCPAction(user.id, "gmail_search_emails", {
+        query: gmailQuery,
+        limit: gmailLimit
+      });
+      if (response.status === "success") {
+        setGmailInboxData(response.result);
+      } else {
+        console.error("Gmail MCP search failed:", response.error);
+        setGmailInboxData(null);
       }
     } catch (e) {
-      console.error("Failed to search Gmail emails:", e);
+      console.error(e);
+      setGmailInboxData(null);
+    } finally {
+      setIsInboxRefreshing(false);
     }
-  };
+  }, [user, gmailStatus, gmailQuery, gmailLimit]);
 
-  const handleFetchEmailDetail = (id: string) => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (gmailStatus) {
+        loadGmailInbox();
+      } else {
+        setGmailInboxData(null);
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [gmailStatus, loadGmailInbox]);
+
+  // Fetch Gmail single email detail
+  const handleFetchEmailDetail = async (id: string) => {
+    if (!user) return;
     setSelectedInboxEmail(id);
     setEmailDetailLoading(true);
-    setTimeout(() => {
-      try {
-        const tool = PLATFORM_MCP_TOOLS.gmail.find(t => t.name === "gmail_get_email");
-        if (tool) {
-          const result = tool.execute({ messageId: id });
-          if (result.status === "success") {
-            setEmailDetails(result.message);
-          } else {
-            setEmailDetails(null);
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setEmailDetailLoading(false);
+    setEmailDetails(null);
+    try {
+      const response = await executeGmailMCPAction(user.id, "gmail_get_email", { messageId: id });
+      if (response.status === "success") {
+        setEmailDetails(response.result);
+      } else {
+        setErrorMessage("Failed to retrieve email detail: " + (response.error?.message || "Unknown error"));
+        setSelectedInboxEmail(null);
       }
-    }, 400);
+    } catch (e) {
+      console.error(e);
+      setSelectedInboxEmail(null);
+    } finally {
+      setEmailDetailLoading(false);
+    }
   };
 
-  // Connect/Disconnect flow
-  const handleConnectClick = (platform: any) => {
-    setOauthPlatform(platform);
-    setOauthStep(1);
-    setShowOAuthModal(true);
-  };
-
-  const handleConfirmConnection = () => {
-    setIsOauthConnecting(true);
-    setOauthStep(2);
+  // Gmail OAuth Connect Click
+  const handleGmailConnect = async () => {
+    if (!user) return;
+    if (!isGoogleConfiguredOnServer) {
+      setShowConfigAlertModal(true);
+      return;
+    }
     
-    // Simulate MCP authentication handshake
-    setTimeout(() => {
-      const nextList = [...connectedPlatforms, oauthPlatform.id];
-      setConnectedPlatforms(nextList);
-      localStorage.setItem("syncra-connected-platforms", JSON.stringify(nextList));
-      setIsOauthConnecting(false);
-      setShowOAuthModal(false);
-    }, 2000);
+    // Redirect browser to the OAuth API initiator route with userId parameter
+    window.location.assign(`/api/auth/google?userId=${user.id}`);
   };
 
-  const handleDisconnectPlatform = (platformId: string) => {
-    const nextList = connectedPlatforms.filter(id => id !== platformId);
-    setConnectedPlatforms(nextList);
-    localStorage.setItem("syncra-connected-platforms", JSON.stringify(nextList));
-    
-    if (platformId === "gmail") {
+  // Gmail Disconnect Click
+  const handleGmailDisconnect = async () => {
+    if (!user) return;
+    setIsLoading(true);
+    try {
+      await disconnectGmailConnection(user.id);
+      setGmailStatus(null);
       setGmailInboxData(null);
+      setSuccessMessage("Gmail connection has been successfully disconnected and tokens revoked.");
+    } catch (e: unknown) {
+      const errorObj = e as { message?: string };
+      setErrorMessage("Failed to disconnect Gmail: " + (errorObj.message || "Unknown error"));
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  // Settings modal / MCP Tool execution
-  const handleSettingsClick = (platform: any) => {
-    setSettingsPlatform(platform);
-    const tools = PLATFORM_MCP_TOOLS[platform.id] || [];
-    const firstTool = tools[0] || null;
-    setSelectedTool(firstTool);
-    
-    // Initialize tool arguments
-    if (firstTool) {
-      const initialArgs: Record<string, any> = {};
-      firstTool.arguments.forEach(arg => {
-        initialArgs[arg.name] = arg.defaultValue !== undefined ? arg.defaultValue : "";
-      });
-      setToolArguments(initialArgs);
-      setToolMcpRequest("");
-      setToolMcpResponse("");
-      setExecStatusMsg("");
+  // Compose Email (Mock/Send)
+  const handleSendCompose = async () => {
+    if (!user) return;
+    if (!composeTo || !composeSubject || !composeBody) {
+      setErrorMessage("Please fill in all fields (recipient, subject, and message body).");
+      return;
     }
-    
-    setShowSettingsModal(true);
-  };
-
-  const handleSelectTool = (tool: MCPTool) => {
-    setSelectedTool(tool);
-    const initialArgs: Record<string, any> = {};
-    tool.arguments.forEach(arg => {
-      initialArgs[arg.name] = arg.defaultValue !== undefined ? arg.defaultValue : "";
-    });
-    setToolArguments(initialArgs);
-    setToolMcpRequest("");
-    setToolMcpResponse("");
-    setExecStatusMsg("");
-  };
-
-  const handleArgChange = (name: string, value: any) => {
-    setToolArguments(prev => ({
-      ...prev,
-      [name]: value,
-    }));
-  };
-
-  const handleExecuteMCPTool = () => {
-    if (!selectedTool) return;
-    setIsExecutingTool(true);
-    setExecStatusMsg("Initializing JSON-RPC payload over stdio transport...");
-
-    // Format request JSON
-    const requestPayload = {
-      jsonrpc: "2.0",
-      method: "tools/call",
-      params: {
-        name: selectedTool.name,
-        arguments: toolArguments,
-      },
-      id: Math.floor(Math.random() * 1000) + 1,
-    };
-    setToolMcpRequest(JSON.stringify(requestPayload, null, 2));
-    setToolMcpResponse("");
-
-    // Simulate execution latency
-    setTimeout(() => {
-      setExecStatusMsg("Sending payload to MCP server process...");
-      setTimeout(() => {
-        setExecStatusMsg("Parsing Response stream...");
-        try {
-          const result = selectedTool.execute(toolArguments);
-          const responsePayload = {
-            jsonrpc: "2.0",
-            result: result,
-            id: requestPayload.id,
-          };
-          setToolMcpResponse(JSON.stringify(responsePayload, null, 2));
-          
-          // If we run Gmail tools, refresh inbox UI reactively
-          if (settingsPlatform?.id === "gmail") {
-            fetchGmailInbox();
-          }
-        } catch (err: any) {
-          setToolMcpResponse(JSON.stringify({
-            jsonrpc: "2.0",
-            error: {
-              code: -32003,
-              message: err.message || "MCP tool execution failed.",
-            },
-            id: requestPayload.id,
-          }, null, 2));
-        } finally {
-          setIsExecutingTool(false);
-          setExecStatusMsg("");
-        }
-      }, 600);
-    }, 600);
-  };
-
-  // Sent mail tool mock execution
-  const handleSendCompose = () => {
-    if (!composeTo || !composeSubject || !composeBody) return;
     setIsSendingEmail(true);
-    
-    setTimeout(() => {
-      const tool = PLATFORM_MCP_TOOLS.gmail.find(t => t.name === "gmail_send_email");
-      if (tool) {
-        tool.execute({ to: composeTo, subject: composeSubject, body: composeBody });
-        fetchGmailInbox();
+    try {
+      const response = await executeGmailMCPAction(user.id, "gmail_send_email", {
+        to: composeTo,
+        subject: composeSubject,
+        body: composeBody
+      });
+      if (response.status === "success") {
+        setSuccessMessage(`Email successfully sent to ${composeTo}!`);
+        setShowComposeModal(false);
+        // Refresh inbox
+        loadGmailInbox();
+        // Clear
+        setComposeTo("");
+        setComposeSubject("");
+        setComposeBody("");
+      } else {
+        setErrorMessage("Failed to send email: " + (response.error?.message || "Unknown error"));
       }
+    } catch (e: unknown) {
+      const errorObj = e as { message?: string };
+      setErrorMessage("Failed to send email: " + (errorObj.message || "Unknown error"));
+    } finally {
       setIsSendingEmail(false);
-      setShowComposeModal(false);
-      
-      // Clear inputs
-      setComposeTo("");
-      setComposeSubject("");
-      setComposeBody("");
-    }, 1200);
+    }
+  };
+
+  // Sync controls for non-Gmail channels
+  const handleConnectMockPlatform = (platformId: string) => {
+    const list = [...mockConnectedList, platformId];
+    setMockConnectedList(list);
+    localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(list));
+    setSuccessMessage(`${PLATFORMS.find(p => p.id === platformId)?.name} connected successfully.`);
+  };
+
+  const handleDisconnectMockPlatform = (platformId: string) => {
+    const list = mockConnectedList.filter(id => id !== platformId);
+    setMockConnectedList(list);
+    localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(list));
+    setSuccessMessage(`${PLATFORMS.find(p => p.id === platformId)?.name} disconnected.`);
+  };
+
+  const handleSettingsClick = async (platform: Platform) => {
+    setSettingsPlatform(platform);
+    setShowSettingsModal(true);
+    setSettingsTools(null);
+    try {
+      const tools = await getProviderTools(platform.id);
+      setSettingsTools(tools);
+    } catch (e) {
+      console.error("Failed to load provider tools:", e);
+      setSettingsTools([]);
+    }
+  };
+
+
+  // Tool toggle switches inside Settings Dialog
+  const handleToggleTool = (toolName: string) => {
+    const nextTools = {
+      ...enabledTools,
+      [toolName]: !enabledTools[toolName]
+    };
+    setEnabledTools(nextTools);
+    localStorage.setItem("syncra-enabled-mcp-tools", JSON.stringify(nextTools));
+  };
+
+  // Tool mapping icon helper
+  const getToolIcon = (toolName: string) => {
+    if (toolName.includes("search")) return <Search className="w-4 h-4" />;
+    if (toolName.includes("send")) return <Send className="w-4 h-4" />;
+    if (toolName.includes("get") || toolName.includes("read")) return <Mail className="w-4 h-4" />;
+    if (toolName.includes("list") || toolName.includes("label")) return <Sliders className="w-4 h-4" />;
+    if (toolName.includes("archive")) return <Archive className="w-4 h-4" />;
+    if (toolName.includes("delete") || toolName.includes("trash")) return <Trash2 className="w-4 h-4" />;
+    if (toolName.includes("reply")) return <CornerUpLeft className="w-4 h-4" />;
+    if (toolName.includes("attachment")) return <Paperclip className="w-4 h-4" />;
+    return <FileText className="w-4 h-4" />;
+  };
+
+  // Format date helper
+  const formatConnectedDate = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return "";
+      return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+    } catch {
+      return "";
+    }
+  };
+
+  const formatLastSyncTime = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return "";
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return "";
+    }
   };
 
   // Rendering Helper: LinkedIn Custom SVG
@@ -379,7 +526,7 @@ export default function IntegrationsPage() {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <p className="font-bold text-secondary text-lg">Initializing Integrations Page...</p>
+          <p className="font-bold text-secondary text-lg">Loading secure dashboard integrations...</p>
         </div>
       </div>
     );
@@ -388,50 +535,103 @@ export default function IntegrationsPage() {
   return (
     <div className="pb-16 font-sans">
       {/* Header section */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
         <div>
           <h1 className="font-display font-black text-4xl text-secondary mb-2 tracking-tight">
             Integrations Workspace
           </h1>
           <p className="text-text-slate text-[16px] font-medium max-w-2xl leading-relaxed">
-            Configure automated sync endpoints. Once linked, you can use the Model Context Protocol (MCP) console explorer to search, fetch, and trigger actions.
+            Connect external workspace endpoints. Securely exchange OAuth codes, check sync parameters, and toggle individual agent tools.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-4 py-2 bg-success-bg border-[2.5px] border-success text-success font-black text-[14px] rounded-xl shadow-flat-sm">
             <ShieldCheck className="w-5 h-5" />
-            <span>MCP Hub Secure</span>
+            <span>OAuth 2.0 Verified</span>
           </div>
         </div>
       </div>
 
+      {/* Success/Error Alerts */}
+      {successMessage && (
+        <div className="mb-8 p-4 bg-success-bg border-[2.5px] border-success rounded-[24px] flex items-center justify-between gap-3 text-success font-bold neo-shadow-sm">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="w-6 h-6 shrink-0" />
+            <p>{successMessage}</p>
+          </div>
+          <button onClick={() => setSuccessMessage(null)} className="p-1 hover:bg-black/5 rounded">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {errorMessage && (
+        <div className="mb-8 p-4 bg-error-bg border-[2.5px] border-error rounded-[24px] flex items-center justify-between gap-3 text-error font-bold neo-shadow-sm">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-6 h-6 shrink-0" />
+            <p>{errorMessage}</p>
+          </div>
+          <button onClick={() => setErrorMessage(null)} className="p-1 hover:bg-black/5 rounded">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Developer Setup Alert Banner */}
+      {!isGoogleConfiguredOnServer && (
+        <div className="mb-8 p-5 bg-warning-bg border-[2.5px] border-warning rounded-[24px] neo-shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-left">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-warning font-black text-[16px]">
+              <AlertTriangle className="w-5 h-5" />
+              <span>Google API Credentials Required</span>
+            </div>
+            <p className="text-[13px] text-text-ink font-semibold leading-relaxed max-w-2xl">
+              OAuth credentials are missing from your environment. Google integration will run in sandbox mode until client ID and client secret keys are configured in your <code className="font-mono text-xs bg-black/5 px-1.5 py-0.5 rounded border border-secondary/20">.env.local</code> file.
+            </p>
+          </div>
+          <Button
+            onClick={() => setShowConfigAlertModal(true)}
+            variant="secondary"
+            size="sm"
+            className="border-[2px] border-secondary text-secondary shrink-0"
+          >
+            Setup Guide
+          </Button>
+        </div>
+      )}
+
+      {/* Main Layout Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-        {/* Left 2 Columns: Integrations Grid */}
+        
+        {/* Left 2 Columns: Platforms Grid */}
         <div className="lg:col-span-2 space-y-8">
           <Card className="neo-border neo-shadow-md bg-surface-white">
             <div className="border-b-[2.5px] border-border-mist pb-6 mb-6">
               <h2 className="font-display font-black text-2xl text-secondary mb-1">
-                Communication & Mail Channels
+                Workspace Channels
               </h2>
               <p className="text-text-slate text-[15px] font-medium">
-                Connect external accounts. Hover to reveal card elevation controls.
+                Add platform connections to grant the Syncra AI Agent access.
               </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {PLATFORMS.map((platform) => {
-                const isConnected = connectedPlatforms.includes(platform.id);
+                // Determine connection state (Gmail checks real state, others check mock list)
+                const isGmail = platform.id === "gmail";
+                const isConnected = isGmail ? !!gmailStatus : mockConnectedList.includes(platform.id);
+                
                 return (
                   <div
                     key={platform.id}
-                    className={`relative p-6 rounded-[22px] border-[2.5px] bg-surface-white flex flex-col justify-between min-h-[260px] transition-all ${
+                    className={`relative p-6 rounded-[22px] border-[2.5px] bg-surface-white flex flex-col justify-between min-h-[280px] transition-all ${
                       isConnected
                         ? "border-secondary dark:border-white shadow-flat-md"
                         : "border-border-mist opacity-70 hover:opacity-100 hover:border-text-fog"
                     }`}
                   >
-                    {/* Header */}
+                    {/* Upper content */}
                     <div>
                       <div className="flex items-center justify-between mb-4">
                         <div className="w-14 h-14 rounded-2xl bg-background-mist border-[1.5px] border-border-mist flex items-center justify-center overflow-hidden">
@@ -455,7 +655,7 @@ export default function IntegrationsPage() {
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-background-mist border-[1.5px] border-border-mist text-text-slate text-[12px] font-medium rounded-lg">
-                            Offline
+                            Disconnected
                           </span>
                         )}
                       </div>
@@ -464,18 +664,62 @@ export default function IntegrationsPage() {
                         {platform.name}
                       </h3>
                       
-                      {/* Two-line description limitation */}
-                      <p className="text-text-slate text-[13px] font-medium leading-relaxed line-clamp-2 mb-4">
-                        {platform.description}
-                      </p>
+                      {/* Platform metadata rendering if connected */}
+                      {isConnected && isGmail && gmailStatus ? (
+                        <div className="mb-4 bg-background-mist border-[1.5px] border-border-mist rounded-xl p-3 text-[11px] font-medium text-text-slate space-y-1.5 text-left">
+                          <div className="flex justify-between">
+                            <span>Account:</span>
+                            <span className="font-bold text-secondary truncate max-w-[150px]">{gmailStatus.email}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Linked On:</span>
+                            <span className="font-bold text-secondary">{formatConnectedDate(gmailStatus.connectedAt)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Last Sync:</span>
+                            <span className="font-bold text-secondary">{formatLastSyncTime(gmailStatus.lastSyncAt) || "Never"}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Status:</span>
+                            <span className="font-bold text-success flex items-center gap-1">
+                              <span className="w-1 h-1 rounded-full bg-success" />
+                              Active Sync
+                            </span>
+                          </div>
+                        </div>
+                      ) : isConnected && !isGmail ? (
+                        <div className="mb-4 bg-background-mist border-[1.5px] border-border-mist rounded-xl p-3 text-[11px] font-medium text-text-slate space-y-1.5 text-left">
+                          <div className="flex justify-between">
+                            <span>Sync Mode:</span>
+                            <span className="font-bold text-secondary">Sandbox Simulation</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Status:</span>
+                            <span className="font-bold text-success flex items-center gap-1">
+                              <span className="w-1 h-1 rounded-full bg-success" />
+                              Active
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-text-slate text-[13px] font-medium leading-relaxed line-clamp-2 mb-4">
+                          {platform.description}
+                        </p>
+                      )}
                     </div>
 
-                    {/* Buttons */}
+                    {/* Bottom actions */}
                     <div className="flex items-center gap-2.5 mt-auto">
                       {isConnected ? (
                         <>
                           <button
-                            onClick={() => handleDisconnectPlatform(platform.id)}
+                            onClick={() => {
+                              if (isGmail) {
+                                handleGmailDisconnect();
+                              } else {
+                                handleDisconnectMockPlatform(platform.id);
+                              }
+                            }}
                             className="flex-1 min-h-[40px] px-4 py-2 bg-error-bg border-[2px] border-error text-error font-bold text-[14px] rounded-xl hover:bg-error hover:text-white transition-all duration-200 cursor-pointer"
                           >
                             Disconnect
@@ -483,18 +727,24 @@ export default function IntegrationsPage() {
                           
                           <button
                             onClick={() => handleSettingsClick(platform)}
-                            title="MCP Tools & Settings"
+                            title={`${platform.name} MCP Settings`}
                             className="min-h-[40px] px-3 bg-surface-white border-[2px] border-secondary text-secondary font-bold text-[14px] rounded-xl hover:bg-background-mist transition-all duration-200 cursor-pointer flex items-center justify-center"
                           >
-                            <Settings className="w-4.5 h-4.5" />
+                            <Settings className="w-[18px] h-[18px]" />
                           </button>
                         </>
                       ) : (
                         <button
-                          onClick={() => handleConnectClick(platform)}
+                          onClick={() => {
+                            if (isGmail) {
+                              handleGmailConnect();
+                            } else {
+                              handleConnectMockPlatform(platform.id);
+                            }
+                          }}
                           className="w-full min-h-[40px] px-4 py-2 bg-primary text-white border-[2px] border-primary font-bold text-[14px] rounded-xl hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-flat-sm active:translate-x-0 active:translate-y-0 active:shadow-none transition-all duration-200 cursor-pointer"
                         >
-                          Connect Platform
+                          Connect
                         </button>
                       )}
                     </div>
@@ -505,7 +755,7 @@ export default function IntegrationsPage() {
           </Card>
         </div>
 
-        {/* Right 1 Column: Gmail Live Stream (Functional using MCP Simulation) */}
+        {/* Right Column: Gmail Live Stream (Functional using REST endpoints) */}
         <div className="space-y-8">
           <Card className="neo-border neo-shadow-md bg-surface-white relative overflow-hidden">
             <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full blur-2xl pointer-events-none" />
@@ -517,12 +767,16 @@ export default function IntegrationsPage() {
                   Gmail Live Stream
                 </h2>
               </div>
-              <span className="text-[10px] font-mono font-bold bg-primary/10 border-[1.5px] border-primary text-primary px-2 py-0.5 rounded-full">
-                MCP CLIENT
-              </span>
+              <button 
+                onClick={loadGmailInbox}
+                disabled={!gmailStatus || isInboxRefreshing}
+                className="p-1 hover:bg-black/5 rounded text-text-slate disabled:opacity-40 disabled:pointer-events-none"
+              >
+                <RefreshCw className={`w-4 h-4 ${isInboxRefreshing ? "animate-spin" : ""}`} />
+              </button>
             </div>
 
-            {connectedPlatforms.includes("gmail") ? (
+            {gmailStatus ? (
               <div className="space-y-4">
                 {/* Search Inbox Controls */}
                 <div className="flex gap-2">
@@ -545,7 +799,7 @@ export default function IntegrationsPage() {
                   </button>
                 </div>
 
-                {/* Unread & Query badges */}
+                {/* Filter tags */}
                 <div className="flex flex-wrap gap-1.5 items-center">
                   <button
                     onClick={() => setGmailQuery("is:unread")}
@@ -580,9 +834,14 @@ export default function IntegrationsPage() {
                 </div>
 
                 {/* Inbox Emails List */}
-                {gmailInboxData && gmailInboxData.messages && gmailInboxData.messages.length > 0 ? (
-                  <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
-                    {gmailInboxData.messages.map((email: any) => (
+                {isInboxRefreshing ? (
+                  <div className="py-16 text-center space-y-3">
+                    <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
+                    <p className="text-[13px] text-text-slate font-bold">Fetching live emails from Google API...</p>
+                  </div>
+                ) : gmailInboxData && gmailInboxData.length > 0 ? (
+                  <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                    {gmailInboxData.map((email: GmailInboxEmail) => (
                       <div
                         key={email.id}
                         onClick={() => handleFetchEmailDetail(email.id)}
@@ -594,7 +853,7 @@ export default function IntegrationsPage() {
                       >
                         <div className="flex justify-between items-start gap-2 mb-1.5">
                           <span className="font-bold text-secondary text-[12px] truncate max-w-[140px]">
-                            {email.from.split(" <")[0]}
+                            {(email.from || "Unknown").split(" <")[0]}
                           </span>
                           <span className="text-[10px] text-text-fog font-medium whitespace-nowrap">
                             {email.date}
@@ -609,7 +868,7 @@ export default function IntegrationsPage() {
                           {email.snippet}
                         </p>
 
-                        {email.labels.includes("UNREAD") && (
+                        {email.unread && (
                           <div className="mt-2 flex">
                             <span className="w-2 h-2 rounded-full bg-primary" />
                           </div>
@@ -621,7 +880,7 @@ export default function IntegrationsPage() {
                   <div className="p-8 border-[2px] border-dashed border-border-mist rounded-xl text-center">
                     <Info className="w-8 h-8 text-text-fog mx-auto mb-2" />
                     <p className="text-[13px] text-text-slate font-medium">
-                      No emails match the current search query.
+                      No emails found.
                     </p>
                   </div>
                 )}
@@ -630,21 +889,18 @@ export default function IntegrationsPage() {
               <div className="p-8 border-[2.5px] border-dashed border-border-mist rounded-[18px] text-center space-y-4 bg-background-mist/30">
                 <Lock className="w-9 h-9 text-text-fog mx-auto" />
                 <div>
-                  <h3 className="font-bold text-secondary text-[15px]">Gmail Disconnected</h3>
+                  <h3 className="font-bold text-secondary text-[15px]">Gmail Offline</h3>
                   <p className="text-text-slate text-[12px] max-w-[200px] mx-auto mt-1 leading-relaxed">
-                    Connect Gmail to activate the live inbox stream fetched via Gmail MCP.
+                    Connect your real Google account using OAuth to fetch live emails and run MCP tools.
                   </p>
                 </div>
                 <Button
-                  onClick={() => {
-                    const gmail = PLATFORMS.find(p => p.id === "gmail");
-                    handleConnectClick(gmail);
-                  }}
+                  onClick={handleGmailConnect}
                   variant="secondary"
                   size="sm"
                   className="w-full text-[13px] min-h-[38px] py-2 border-[2px] border-secondary"
                 >
-                  Connect Gmail Now
+                  Connect Gmail
                 </Button>
               </div>
             )}
@@ -652,138 +908,9 @@ export default function IntegrationsPage() {
         </div>
       </div>
 
-      {/* ── Modal: OAuth Google Consent Mock ── */}
-      {showOAuthModal && oauthPlatform && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-surface-white neo-border rounded-[28px] max-w-md w-full overflow-hidden neo-shadow-lg animate-in fade-in zoom-in duration-200">
-            {/* Modal Header */}
-            <div className="p-6 border-b-[2.5px] border-border-mist bg-background-mist flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <img src="/logo.png" alt="Syncra" className="w-6 h-6 object-contain" />
-                <span className="font-display font-black text-[18px] text-secondary">
-                  Authorize Syncra Integration
-                </span>
-              </div>
-              <button
-                onClick={() => setShowOAuthModal(false)}
-                className="p-1.5 hover:bg-black/5 rounded-lg text-text-slate transition-all"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {oauthStep === 1 ? (
-              <div className="p-6 space-y-6">
-                <div className="text-center space-y-3">
-                  <div className="w-16 h-16 rounded-2xl bg-background-mist border-[1.5px] border-border-mist flex items-center justify-center mx-auto shadow-flat-sm">
-                    {oauthPlatform.icon ? (
-                      <img src={oauthPlatform.icon} alt={oauthPlatform.name} className="w-10 h-10 object-contain" />
-                    ) : oauthPlatform.id === "linkedin" ? (
-                      renderLinkedInIcon()
-                    ) : (
-                      renderGitHubIcon()
-                    )}
-                  </div>
-                  <div>
-                    <h3 className="font-display font-black text-xl text-secondary">
-                      Connect {oauthPlatform.name}
-                    </h3>
-                    <p className="text-text-slate text-[13px] font-medium mt-1">
-                      via standard secure Model Context Protocol gateway.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="p-4 bg-info-bg border-[1.5px] border-info rounded-xl text-left space-y-2.5">
-                  <div className="flex gap-2 text-info">
-                    <ShieldCheck className="w-5 h-5 shrink-0 mt-0.5" />
-                    <span className="font-bold text-[13px]">Requested Security Permissions</span>
-                  </div>
-                  <ul className="text-[12px] font-medium text-text-ink space-y-2 pl-6 list-disc">
-                    <li>Read your personal profile and primary email logs.</li>
-                    {oauthPlatform.id === "gmail" && (
-                      <>
-                        <li>Access your inbox feed & emails via Gmail MCP endpoints.</li>
-                        <li>Create draft responses and send mails.</li>
-                      </>
-                    )}
-                    {oauthPlatform.id === "slack" && (
-                      <>
-                        <li>Access public channels metadata & read channel histories.</li>
-                        <li>Post text payloads as integration webhook.</li>
-                      </>
-                    )}
-                    {oauthPlatform.id !== "gmail" && oauthPlatform.id !== "slack" && (
-                      <li>Read active chat streams and trigger response nodes.</li>
-                    )}
-                  </ul>
-                </div>
-
-                {/* Transport selector explanation */}
-                <div className="text-left">
-                  <label className="block text-[12px] font-black text-secondary uppercase tracking-wider mb-1.5">
-                    MCP Integration Protocol
-                  </label>
-                  <div className="p-3 bg-background-mist border-[2px] border-secondary dark:border-white rounded-xl flex items-center justify-between">
-                    <div className="flex items-center gap-2 font-mono text-[12px] text-secondary font-bold">
-                      <Terminal className="w-4 h-4 text-primary" />
-                      <span>stdio_transport_client</span>
-                    </div>
-                    <span className="text-[10px] font-bold text-success bg-success-bg px-2 py-0.5 border border-success rounded">
-                      ACTIVE
-                    </span>
-                  </div>
-                </div>
-
-                {/* Consent actions */}
-                <div className="flex gap-3 pt-2">
-                  <Button
-                    onClick={() => setShowOAuthModal(false)}
-                    variant="secondary"
-                    className="flex-1 min-h-[44px] py-2 border-[2px] border-secondary"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={handleConfirmConnection}
-                    className="flex-1 min-h-[44px] py-2 bg-primary text-white"
-                  >
-                    Authorize Access
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="p-8 text-center space-y-6">
-                {/* Connecting feedback */}
-                <div className="relative w-20 h-20 mx-auto">
-                  <div className="absolute inset-0 rounded-full border-[4px] border-primary/20 border-t-primary animate-spin" />
-                  <div className="absolute inset-2 bg-background-mist border-[1.5px] border-border-mist rounded-full flex items-center justify-center">
-                    <Power className="w-6 h-6 text-primary animate-pulse" />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <h3 className="font-display font-black text-lg text-secondary">
-                    Linking with {oauthPlatform.name} MCP Server
-                  </h3>
-                  <div className="flex flex-col items-center gap-1.5">
-                    <span className="text-text-slate font-mono text-[12px] animate-pulse">
-                      Initializing stdio pipeline...
-                    </span>
-                    <span className="text-[11px] text-text-fog font-medium">
-                      Establishing connection to local tools registry
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* ── Modal: Gmail Email Content Viewer ── */}
       {selectedInboxEmail && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-surface-white neo-border rounded-[28px] max-w-lg w-full overflow-hidden neo-shadow-lg animate-in fade-in zoom-in duration-200">
             {/* Header */}
             <div className="p-6 border-b-[2.5px] border-border-mist bg-background-mist flex items-center justify-between">
@@ -810,7 +937,7 @@ export default function IntegrationsPage() {
                 <div className="py-12 text-center space-y-3">
                   <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
                   <p className="text-[13px] text-text-slate font-bold">
-                    Running `gmail_get_email` MCP tool query...
+                    Running `gmail_get_email` MCP tool...
                   </p>
                 </div>
               ) : emailDetails ? (
@@ -841,14 +968,14 @@ export default function IntegrationsPage() {
                   </div>
                   
                   <div className="flex justify-between items-center text-[11px] text-text-slate font-mono">
-                    <span>Protocol: jsonrpc-stdio-2.0</span>
+                    <span>Protocol: Google Gmail API (Direct Link)</span>
                     <span className="text-success font-bold">Status: OK</span>
                   </div>
                 </div>
               ) : (
                 <div className="py-6 text-center text-error space-y-2">
                   <AlertCircle className="w-8 h-8 mx-auto" />
-                  <p className="font-bold">Failed to load email details.</p>
+                  <p className="font-bold">Failed to load email details from Gmail API.</p>
                 </div>
               )}
 
@@ -871,14 +998,14 @@ export default function IntegrationsPage() {
 
       {/* ── Modal: Compose Email ── */}
       {showComposeModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-surface-white neo-border rounded-[28px] max-w-lg w-full overflow-hidden neo-shadow-lg animate-in fade-in zoom-in duration-200">
             {/* Header */}
             <div className="p-6 border-b-[2.5px] border-border-mist bg-background-mist flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Mail className="w-5 h-5 text-primary" />
                 <span className="font-display font-black text-[18px] text-secondary">
-                  Compose Email (via Gmail MCP)
+                  New Message (Gmail MCP)
                 </span>
               </div>
               <button
@@ -893,7 +1020,7 @@ export default function IntegrationsPage() {
             <div className="p-6 space-y-4 text-left">
               <div className="space-y-1">
                 <label className="block text-[12px] font-black text-secondary uppercase tracking-wider">
-                  To Recipient
+                  Recipient Email
                 </label>
                 <input
                   type="email"
@@ -951,15 +1078,82 @@ export default function IntegrationsPage() {
         </div>
       )}
 
-      {/* ── Modal: Settings / MCP Explorer ── */}
+      {/* ── Modal: Developer Config Setup Guide ── */}
+      {showConfigAlertModal && (
+        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-surface-white neo-border rounded-[28px] max-w-lg w-full overflow-hidden neo-shadow-lg animate-in fade-in zoom-in duration-200">
+            {/* Header */}
+            <div className="p-6 border-b-[2.5px] border-border-mist bg-background-mist flex items-center justify-between">
+              <div className="flex items-center gap-2 text-warning">
+                <AlertTriangle className="w-5 h-5 animate-pulse" />
+                <span className="font-display font-black text-[18px] text-secondary">
+                  Developer Setup Required
+                </span>
+              </div>
+              <button
+                onClick={() => setShowConfigAlertModal(false)}
+                className="p-1.5 hover:bg-black/5 rounded-lg text-text-slate transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Guide Body */}
+            <div className="p-6 space-y-4 text-left">
+              <p className="text-[13px] text-text-slate font-medium leading-relaxed">
+                To connect a real Google account, you must configure Google Client ID and Secret in your environment file.
+              </p>
+
+              <div className="space-y-3 bg-background-mist border-[2px] border-secondary p-4 rounded-2xl">
+                <h4 className="font-bold text-[12px] uppercase tracking-wider text-secondary">
+                  Steps to obtain keys:
+                </h4>
+                <ol className="text-[12px] font-medium text-text-ink space-y-2 list-decimal pl-4">
+                  <li>Go to the <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="text-primary font-bold hover:underline inline-flex items-center gap-0.5">Google Cloud Console <ExternalLink className="w-3 h-3 inline" /></a>.</li>
+                  <li>Create a project and enable the <strong>Gmail API</strong>.</li>
+                  <li>Configure your OAuth Consent Screen with standard scopes.</li>
+                  <li>Create an <strong>OAuth 2.0 Client ID</strong> (Web Application).</li>
+                  <li>Set the Authorized Redirect URI to:
+                    <div className="mt-1 p-2 bg-secondary text-white font-mono text-[11px] rounded overflow-x-auto select-all">
+                      {`${typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/api/auth/callback/google`}
+                    </div>
+                  </li>
+                </ol>
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-[11px] font-black text-secondary uppercase tracking-wider">
+                  Paste values in .env.local:
+                </label>
+                <pre className="p-3.5 bg-secondary text-white border-[2px] border-secondary rounded-xl text-[11px] font-mono select-all overflow-x-auto">
+{`GOOGLE_CLIENT_ID="your-client-id-here"
+GOOGLE_CLIENT_SECRET="your-client-secret-here"
+NEXT_PUBLIC_APP_URL="http://localhost:3000"`}
+                </pre>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <Button
+                  onClick={() => setShowConfigAlertModal(false)}
+                  variant="primary"
+                  className="min-h-[44px] px-8 text-[14px]"
+                >
+                  Got It
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Redesigned Settings dialog ── */}
       {showSettingsModal && settingsPlatform && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-surface-white neo-border rounded-[28px] max-w-4xl w-full overflow-hidden neo-shadow-lg flex flex-col md:flex-row h-[90vh] md:h-[680px] animate-in fade-in zoom-in duration-200 text-left">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-surface-white neo-border rounded-[28px] max-w-md w-full overflow-hidden neo-shadow-lg flex flex-col max-h-[85vh] animate-in fade-in zoom-in duration-200 text-left">
             
-            {/* Left sidebar: MCP tools selector list */}
-            <div className="w-full md:w-[280px] border-b-[2.5px] md:border-b-0 md:border-r-[2.5px] border-border-mist bg-background-mist flex flex-col">
-              {/* Header */}
-              <div className="p-5 border-b-[2px] border-border-mist flex items-center gap-3">
+            {/* Redesigned Dialog Header */}
+            <div className="p-6 border-b-[2.5px] border-border-mist bg-background-mist flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-surface-white border border-border-mist shrink-0">
                   {settingsPlatform.icon ? (
                     <img src={settingsPlatform.icon} alt={settingsPlatform.name} className="w-6 h-6 object-contain" />
@@ -971,180 +1165,87 @@ export default function IntegrationsPage() {
                 </div>
                 <div>
                   <h3 className="font-display font-black text-lg text-secondary">
-                    {settingsPlatform.name} MCP
+                    {settingsPlatform.name} MCP Tools
                   </h3>
-                  <span className="text-[10px] font-bold text-success flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                    Protocol Connected
-                  </span>
+                  <p className="text-text-slate text-[12px] font-medium mt-0.5">
+                    Toggle active tools inside the AI context window.
+                  </p>
                 </div>
               </div>
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="p-1.5 hover:bg-black/5 rounded-lg text-text-slate transition-all shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-              {/* Tools list */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                <span className="block text-[11px] font-black text-text-slate uppercase tracking-wider mb-2">
-                  Exposed MCP Tools
-                </span>
-                {(PLATFORM_MCP_TOOLS[settingsPlatform.id] || []).map((tool) => (
-                  <button
-                    key={tool.name}
-                    onClick={() => handleSelectTool(tool)}
-                    className={`w-full p-3 text-left rounded-xl border-[2px] transition-all cursor-pointer font-mono text-[12px] flex items-center gap-2 ${
-                      selectedTool?.name === tool.name
-                        ? "border-primary bg-primary/5 text-primary font-bold"
-                        : "border-transparent text-text-slate hover:bg-black/5"
-                    }`}
-                  >
-                    <Sliders className="w-3.5 h-3.5" />
-                    <span className="truncate">{tool.name}</span>
-                  </button>
-                ))}
-                {(PLATFORM_MCP_TOOLS[settingsPlatform.id] || []).length === 0 && (
-                  <p className="text-[12px] text-text-slate italic p-4">No tools registered.</p>
+            {/* Redesigned Dialog Body: Only Displays MCP Tools list */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="divide-y-[2px] divide-border-mist">
+                {settingsTools === null ? (
+                  <div className="py-8 text-center text-text-slate italic">
+                    Loading MCP tools dynamically...
+                  </div>
+                ) : settingsTools.length > 0 ? (
+                  settingsTools.map((tool) => {
+                    const isActive = enabledTools[tool.name] !== false;
+                    
+                    return (
+                      <div
+                        key={tool.name}
+                        className="py-4 first:pt-0 last:pb-0 flex items-center justify-between gap-4"
+                      >
+                        {/* Tool description left */}
+                        <div className="flex gap-3 items-start min-w-0">
+                          <div className={`p-2.5 rounded-xl border-[1.5px] shrink-0 mt-0.5 ${
+                            isActive
+                              ? "bg-primary/10 border-primary text-primary"
+                              : "bg-background-mist border-border-mist text-text-slate"
+                          }`}>
+                            {getToolIcon(tool.name)}
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="font-mono font-bold text-[13px] text-secondary truncate">
+                              {tool.displayName}
+                            </h4>
+                            <p className="text-text-slate text-[12px] leading-relaxed mt-0.5 font-medium">
+                              {tool.description}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Tool Toggle Switch right */}
+                        <button
+                          role="switch"
+                          aria-checked={isActive}
+                          onClick={() => handleToggleTool(tool.name)}
+                          className={`w-12 h-[26px] rounded-full p-1 flex items-center cursor-pointer transition-all duration-300 shrink-0 ${
+                            isActive ? "bg-success border-[2px] border-secondary justify-end" : "bg-text-fog border-[2px] border-border-mist justify-start"
+                          }`}
+                        >
+                          <span className="w-4 h-4 bg-white rounded-full shadow-inner border border-secondary/25" />
+                        </button>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="py-8 text-center text-text-slate italic">
+                    No MCP tools exposed for this channel.
+                  </div>
                 )}
               </div>
             </div>
 
-            {/* Right side: Tool details & console execution */}
-            <div className="flex-1 flex flex-col overflow-hidden bg-surface-white">
-              {/* Tool top header */}
-              <div className="p-5 border-b-[2px] border-border-mist flex justify-between items-center">
-                <div>
-                  <h3 className="font-mono font-bold text-[16px] text-secondary">
-                    {selectedTool?.name || "Select a tool"}
-                  </h3>
-                  <p className="text-text-slate text-[13px] font-medium mt-1">
-                    {selectedTool?.description || "Select an MCP tool from the sidebar to inspect its JSON schema and execute it."}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowSettingsModal(false)}
-                  className="p-1.5 hover:bg-black/5 rounded-lg text-text-slate transition-all shrink-0"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {selectedTool ? (
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                  {/* JSON Schema */}
-                  <div className="space-y-2">
-                    <span className="block text-[11px] font-black text-secondary uppercase tracking-wider">
-                      Input Argument Schema
-                    </span>
-                    <pre className="p-4 bg-background-mist border-[2.5px] border-secondary dark:border-white rounded-xl text-[12px] font-mono text-secondary overflow-x-auto max-h-[120px] scrollbar-hide">
-                      {JSON.stringify(selectedTool.inputSchema, null, 2)}
-                    </pre>
-                  </div>
-
-                  {/* Input Arguments Form */}
-                  {selectedTool.arguments.length > 0 && (
-                    <div className="space-y-4">
-                      <span className="block text-[11px] font-black text-secondary uppercase tracking-wider">
-                        Configure Arguments
-                      </span>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {selectedTool.arguments.map((arg) => (
-                          <div key={arg.name} className="space-y-1.5 col-span-1 md:col-span-2">
-                            <label className="block text-[12px] font-bold text-secondary">
-                              {arg.label} <span className="font-mono text-[11px] text-text-slate">({arg.name})</span>
-                              {arg.required && <span className="text-error ml-1">*</span>}
-                            </label>
-                            {arg.type === "textarea" ? (
-                              <textarea
-                                value={toolArguments[arg.name] || ""}
-                                onChange={(e) => handleArgChange(arg.name, e.target.value)}
-                                placeholder={arg.placeholder}
-                                rows={3}
-                                className="w-full p-3 bg-background-mist border-[2px] border-secondary dark:border-white rounded-xl text-[13px] outline-none"
-                              />
-                            ) : arg.type === "number" ? (
-                              <input
-                                type="number"
-                                value={toolArguments[arg.name] || ""}
-                                onChange={(e) => handleArgChange(arg.name, Number(e.target.value))}
-                                placeholder={arg.placeholder}
-                                className="w-full h-11 px-4 bg-background-mist border-[2px] border-secondary dark:border-white rounded-xl text-[13px] outline-none"
-                              />
-                            ) : arg.type === "boolean" ? (
-                              <div className="flex items-center gap-2 py-2">
-                                <input
-                                  type="checkbox"
-                                  checked={!!toolArguments[arg.name]}
-                                  onChange={(e) => handleArgChange(arg.name, e.target.checked)}
-                                  className="w-5 h-5 accent-primary cursor-pointer border-[2px] border-secondary rounded"
-                                />
-                                <span className="text-[13px] text-secondary">Enable flag</span>
-                              </div>
-                            ) : (
-                              <input
-                                type="text"
-                                value={toolArguments[arg.name] || ""}
-                                onChange={(e) => handleArgChange(arg.name, e.target.value)}
-                                placeholder={arg.placeholder}
-                                className="w-full h-11 px-4 bg-background-mist border-[2px] border-secondary dark:border-white rounded-xl text-[13px] outline-none"
-                              />
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Execution Action */}
-                  <div className="pt-2 flex justify-start">
-                    <Button
-                      onClick={handleExecuteMCPTool}
-                      isLoading={isExecutingTool}
-                      className="min-h-[44px] px-8 bg-primary text-white flex gap-2 items-center text-[15px]"
-                    >
-                      <Terminal className="w-4.5 h-4.5" />
-                      <span>Execute Tool via MCP</span>
-                    </Button>
-                  </div>
-
-                  {/* Terminal Console log / Outputs */}
-                  {(isExecutingTool || execStatusMsg || toolMcpRequest || toolMcpResponse) && (
-                    <div className="space-y-4">
-                      <span className="block text-[11px] font-black text-secondary uppercase tracking-wider">
-                        MCP JSON-RPC Console Output
-                      </span>
-                      
-                      <div className="bg-[#0f172a] text-white p-5 rounded-2xl font-mono text-[12px] space-y-4 overflow-hidden border-[2.5px] border-[#0f172a] shadow-inner">
-                        {execStatusMsg && (
-                          <div className="flex items-center gap-2 text-primary">
-                            <span className="w-2 h-2 rounded-full bg-primary animate-ping" />
-                            <span>{execStatusMsg}</span>
-                          </div>
-                        )}
-
-                        {toolMcpRequest && (
-                          <div className="space-y-1 text-left">
-                            <span className="text-[#a78bfa] font-bold block">// client --&gt; server (request)</span>
-                            <pre className="bg-[#1e293b] p-3 rounded-lg overflow-x-auto text-[11px]">
-                              {toolMcpRequest}
-                            </pre>
-                          </div>
-                        )}
-
-                        {toolMcpResponse && (
-                          <div className="space-y-1 text-left">
-                            <span className="text-[#34d399] font-bold block">// client &lt;-- server (response)</span>
-                            <pre className="bg-[#1e293b] p-3 rounded-lg overflow-x-auto text-[11px]">
-                              {toolMcpResponse}
-                            </pre>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-text-slate p-6">
-                  <Terminal className="w-12 h-12 text-text-fog mb-2" />
-                  <p className="font-bold">No tool selected</p>
-                </div>
-              )}
+            {/* Redesigned Dialog Footer */}
+            <div className="p-6 border-t-[2.5px] border-border-mist bg-background-mist flex justify-end shrink-0">
+              <Button
+                onClick={() => setShowSettingsModal(false)}
+                variant="primary"
+                className="min-h-[44px] px-8 text-[14px]"
+              >
+                Save Settings
+              </Button>
             </div>
 
           </div>

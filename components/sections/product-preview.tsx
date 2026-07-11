@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Card } from "@/components/ui/card";
-import { Sparkles, MessageSquare, Mail, Search, CheckSquare, Bell, Calendar, Send, Compass } from "lucide-react";
+import { Sparkles, MessageSquare, Search, CheckSquare, Bell, Send, Compass } from "lucide-react";
 
 export function ProductPreview() {
   const [activeHotspot, setActiveHotspot] = useState<number | null>(null);
@@ -220,7 +219,7 @@ export function ProductPreview() {
                 <div className="border-t border-border-mist pt-4">
                   <div className="bg-background-mist p-3 rounded-[18px] border border-border-mist flex items-center justify-between">
                     <span className="font-sans text-xs text-text-slate">
-                      AI Draft: "Looks great, Sophia! I'll review..."
+                      AI Draft: &quot;Looks great, Sophia! I&apos;ll review...&quot;
                     </span>
                     <button className="p-1.5 rounded-lg bg-primary text-white border border-secondary hover:scale-105 active:scale-95 transition-transform" disabled>
                       <Send className="w-3.5 h-3.5" />

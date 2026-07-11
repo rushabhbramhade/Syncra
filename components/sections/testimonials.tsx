@@ -5,25 +5,25 @@ import { Quote } from "lucide-react";
 export function Testimonials() {
   const reviews = [
     {
-      name: "Marcus Aurelius",
+      name: "Marcus Vance",
       role: "Operations Lead at Acme",
-      avatar: "MA",
+      avatar: "MV",
       color: "bg-accent-purple",
-      quote: "Checking Slack, WhatsApp, and Gmail used to take half my morning. With Syncar, I get a clean dashboard summary twice a day. It has completely saved my productivity."
+      quote: "Checking Slack, WhatsApp, and Gmail used to take half my morning. With Syncra, I get a clean dashboard summary twice a day. It has completely saved my productivity."
     },
     {
       name: "Sophia Carter",
       role: "Creative Director at DesignStudio",
       avatar: "SC",
       color: "bg-accent-pink",
-      quote: "Syncar feels incredibly minimal yet powerful. The semantic search is magical — I can find design file links from conversations across Discord and Slack instantly."
+      quote: "Syncra feels incredibly minimal yet powerful. The semantic search is magical — I can find design file links from conversations across Discord and Slack instantly."
     },
     {
       name: "Jason Chen",
       role: "Lead Software Architect at Logix",
       avatar: "JC",
       color: "bg-accent-green",
-      quote: "We connected our developer notifications and client feedback channels. Syncar automatically created task lists, saving us hours of manual project management."
+      quote: "We connected our developer notifications and client feedback channels. Syncra automatically created task lists, saving us hours of manual project management."
     }
   ];
 
@@ -55,7 +55,7 @@ export function Testimonials() {
               <div className="flex flex-col items-start gap-4">
                 <Quote className="w-8 h-8 text-primary opacity-30" />
                 <p className="font-serif italic text-lg leading-relaxed text-secondary">
-                  "{rev.quote}"
+                  &quot;{rev.quote}&quot;
                 </p>
               </div>
 

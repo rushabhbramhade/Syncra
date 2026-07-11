@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { insforge } from "@/lib/insforge";
+import { signUpAction, signInWithGoogleAction } from "@/app/actions";
 import { ArrowRight, AlertCircle, Eye, EyeOff, CheckCircle } from "lucide-react";
 
 export default function SignUp() {
@@ -33,9 +34,26 @@ export default function SignUp() {
   // Check if user is already logged in
   useEffect(() => {
     async function checkUser() {
-      const { data } = await insforge.auth.getCurrentUser();
-      if (data?.user) {
-        router.push("/dashboard");
+      // Only check user if there is a local session signature.
+      // If none exists, the server proxy has already confirmed they don't have valid cookies.
+      if (typeof window !== "undefined" && !localStorage.getItem("syncra-user-session")) {
+        return;
+      }
+      
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Timeout")), 2000)
+        );
+        const { data } = await Promise.race([
+          insforge.auth.getCurrentUser(),
+          timeoutPromise
+        ]) as Awaited<ReturnType<typeof insforge.auth.getCurrentUser>>;
+        
+        if (data?.user) {
+          router.push("/dashboard");
+        }
+      } catch (e) {
+        console.error("Optimistic user check failed:", e);
       }
     }
     checkUser();
@@ -148,7 +166,7 @@ export default function SignUp() {
 
     try {
       const redirectUrl = window.location.origin + "/sign-in";
-      const { data, error } = await insforge.auth.signUp({
+      const { data, error } = await signUpAction({
         email,
         password,
         name: name.trim(),
@@ -156,7 +174,7 @@ export default function SignUp() {
       });
 
       if (error) {
-        const errObj = error as any;
+        const errObj = error as { message?: string };
         setFormError(errObj.message || "Sign up failed. Please try again.");
       } else if (data) {
         if (data.requireEmailVerification) {
@@ -165,7 +183,10 @@ export default function SignUp() {
           setTimeout(() => {
             router.push(`/verify-email?email=${encodeURIComponent(email)}`);
           }, 2000);
-        } else if (data.accessToken) {
+        } else if (data.user) {
+          if (typeof window !== "undefined") {
+            localStorage.setItem("syncra-user-session", JSON.stringify(data.user));
+          }
           setFormSuccess("Account created successfully! Redirecting to dashboard...");
           setTimeout(() => {
             router.push("/dashboard");
@@ -177,8 +198,9 @@ export default function SignUp() {
           }, 2000);
         }
       }
-    } catch (err: any) {
-      setFormError(err.message || "Network error. Please try again.");
+    } catch (err: unknown) {
+      const errorObj = err as { message?: string };
+      setFormError(errorObj.message || "Network error. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -190,18 +212,19 @@ export default function SignUp() {
     setIsOAuthLoading(true);
 
     try {
-      const redirectUrl = window.location.origin + "/dashboard";
-      const { error } = await insforge.auth.signInWithOAuth("google", {
-        redirectTo: redirectUrl,
-        additionalParams: { prompt: "select_account" },
-      });
+      const redirectUrl = window.location.origin + "/api/auth/callback";
+      const result = await signInWithGoogleAction(redirectUrl);
 
-      if (error) {
-        setFormError(error.message || "Failed to initialize Google Sign-Up.");
+      if (result && result.error) {
+        setFormError(result.error.message || "Failed to initialize Google Sign-Up.");
         setIsOAuthLoading(false);
       }
-    } catch (err: any) {
-      setFormError(err.message || "Failed to redirect to Google.");
+    } catch (err: unknown) {
+      const errorObj = err as { message?: string; digest?: string };
+      if (errorObj.message?.includes("NEXT_REDIRECT") || errorObj.digest?.startsWith("NEXT_REDIRECT")) {
+        throw err;
+      }
+      setFormError(errorObj.message || "Failed to redirect to Google.");
       setIsOAuthLoading(false);
     }
   };

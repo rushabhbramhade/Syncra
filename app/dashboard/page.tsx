@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { insforge } from "@/lib/insforge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { syncUserToDatabase } from "@/app/actions";
+import { syncUserToDatabase, signOutAction } from "@/app/actions";
 import {
   LogOut,
   User as UserIcon,
@@ -13,89 +13,211 @@ import {
   Database,
   RefreshCw,
   CloudLightning,
-  Clock,
   Sparkles,
   AlertCircle,
 } from "lucide-react";
 
+interface InsforgeUser {
+  id: string;
+  email: string;
+  profile?: {
+    name?: string;
+    avatar_url?: string;
+  } | null;
+  providers?: string[];
+  emailVerified?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+interface DatabaseUser {
+  id: string;
+  auth_user_id: string;
+  email: string;
+  full_name: string;
+  avatar_url?: string | null;
+  auth_provider: string;
+  email_verified: boolean;
+  created_at: string | null;
+  last_login_at: string | null;
+}
+
 export default function Dashboard() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
-  const [dbUser, setDbUser] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<InsforgeUser | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("syncra-user-session");
+        return stored ? JSON.parse(stored) : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+  const [dbUser, setDbUser] = useState<DatabaseUser | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("syncra-db-user-session");
+        return stored ? JSON.parse(stored) : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+  const [isLoading, setIsLoading] = useState(() => {
+    if (typeof window !== "undefined") {
+      return !localStorage.getItem("syncra-user-session");
+    }
+    return true;
+  });
   const [isSignOutLoading, setIsSignOutLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
   // Integrations state
-  const [integrations, setIntegrations] = useState([
-    { id: "gmail", name: "Gmail", icon: "/gmail.png", connected: true, unread: 12 },
-    { id: "slack", name: "Slack", icon: "/slack.png", connected: true, unread: 5 },
-    { id: "telegram", name: "Telegram", icon: "/telegram.png", connected: false, unread: 0 },
-    { id: "whatsapp", name: "WhatsApp", icon: "/whatsapp.png", connected: false, unread: 0 },
-    { id: "outlook", name: "Outlook", icon: "/email.png", connected: false, unread: 0 },
-  ]);
+  const [integrations, setIntegrations] = useState<{
+    id: string;
+    name: string;
+    icon: string;
+    connected: boolean;
+    unread: number;
+  }[]>([]);
+
+  // Guard: run the session fetch exactly once per mount (protects against React
+  // Strict Mode double-invocation and any future dependency churn).
+  const hasFetched = useRef(false);
+  // Track mount status so we never call setState after unmount.
+  const isMounted = useRef(true);
 
   // Fetch session and sync user from public.users table
-  const fetchUserSession = async () => {
+  const fetchUserSession = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    if (!isMounted.current) return;
     setErrorMsg("");
     try {
-      const { data, error } = await insforge.auth.getCurrentUser();
-      
+      // 5-second timeout to avoid infinite loading if session verification hangs
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Session verification timeout")), 5000)
+      );
+
+      const { data, error } = await Promise.race([
+        insforge.auth.getCurrentUser(),
+        timeoutPromise
+      ]) as Awaited<ReturnType<typeof insforge.auth.getCurrentUser>>;
+
+      if (!isMounted.current) return;
+
       if (error || !data?.user) {
-        router.push("/sign-in");
+        localStorage.removeItem("syncra-user-session");
+        localStorage.removeItem("syncra-db-user-session");
+        // Use router.replace so Next.js does a soft navigation — no full-page
+        // reload that would re-mount this component and re-trigger the fetch.
+        router.replace("/sign-in");
         return;
       }
 
       setUser(data.user);
+      localStorage.setItem("syncra-user-session", JSON.stringify(data.user));
+      setIsLoading(false);
 
-      // Sync and verify user database record via Server Action
-      const syncedUser = await syncUserToDatabase({
+      // Sync and verify user database record via Server Action in the background
+      syncUserToDatabase({
         auth_user_id: data.user.id,
         email: data.user.email,
         full_name: data.user.profile?.name || "New User",
         avatar_url: data.user.profile?.avatar_url || null,
         auth_provider: data.user.providers?.[0] || "email",
         email_verified: data.user.emailVerified || false,
+      }).then((syncedUser) => {
+        if (!isMounted.current) return;
+        setDbUser(syncedUser);
+        localStorage.setItem("syncra-db-user-session", JSON.stringify(syncedUser));
+      }).catch((err) => {
+        console.error("Failed to sync user record in background:", err);
       });
-
-      setDbUser(syncedUser);
-    } catch (err: any) {
-      console.error(err);
-      setErrorMsg(err.message || "Failed to fetch session. Please log in again.");
-      router.push("/sign-in");
-    } finally {
+    } catch (err: unknown) {
+      if (!isMounted.current) return;
+      const errorObj = err as { message?: string };
+      console.error("getCurrentUser error or timeout:", err);
+      setErrorMsg(errorObj.message || "Failed to fetch session. Please log in again.");
+      localStorage.removeItem("syncra-user-session");
+      localStorage.removeItem("syncra-db-user-session");
       setIsLoading(false);
+      router.replace("/sign-in");
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router]);
 
   useEffect(() => {
+    // Prevent double-invocation (React Strict Mode, HMR re-mount, etc.)
+    if (hasFetched.current) return;
+    hasFetched.current = true;
+    isMounted.current = true;
+
     fetchUserSession();
-  }, [router]);
+
+    return () => {
+      isMounted.current = false;
+    };
+  // Run only on initial mount — fetchUserSession is stable.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load real integration statuses
+  useEffect(() => {
+    if (!user) return;
+    const loadIntegrations = async () => {
+      try {
+        const { getGmailConnectionStatus } = await import("@/app/actions/integrations");
+        const gmailConn = await getGmailConnectionStatus(user.id);
+        
+        setIntegrations([
+          { id: "gmail", name: "Gmail", icon: "/gmail.png", connected: !!gmailConn, unread: 0 },
+          { id: "slack", name: "Slack", icon: "/slack.png", connected: false, unread: 0 },
+          { id: "telegram", name: "Telegram", icon: "/telegram.png", connected: false, unread: 0 },
+          { id: "whatsapp", name: "WhatsApp", icon: "/whatsapp.png", connected: false, unread: 0 },
+          { id: "outlook", name: "Outlook", icon: "/email.png", connected: false, unread: 0 },
+        ]);
+      } catch (e) {
+        console.error("Failed to load integration status:", e);
+        setIntegrations([
+          { id: "gmail", name: "Gmail", icon: "/gmail.png", connected: false, unread: 0 },
+          { id: "slack", name: "Slack", icon: "/slack.png", connected: false, unread: 0 },
+          { id: "telegram", name: "Telegram", icon: "/telegram.png", connected: false, unread: 0 },
+          { id: "whatsapp", name: "WhatsApp", icon: "/whatsapp.png", connected: false, unread: 0 },
+          { id: "outlook", name: "Outlook", icon: "/email.png", connected: false, unread: 0 },
+        ]);
+      }
+    };
+    loadIntegrations();
+  }, [user]);
 
   // Handle Log Out
   const handleSignOut = async () => {
     setIsSignOutLoading(true);
     try {
-      const { error } = await insforge.auth.signOut();
-      if (error) {
-        console.error("Sign out error:", error);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("syncra-user-session");
+        localStorage.removeItem("syncra-db-user-session");
       }
-      router.push("/sign-in");
+      const { error } = await signOutAction();
+      if (error) {
+        console.error("Sign out action error:", error);
+      }
+      // Hard redirect to clear router cache and state
+      window.location.href = "/sign-in";
     } catch (err) {
       console.error(err);
-      router.push("/sign-in");
+      window.location.href = "/sign-in";
     } finally {
       setIsSignOutLoading(false);
     }
   };
 
-  // Toggle connection state for mock UI
-  const toggleIntegration = (id: string) => {
-    setIntegrations(
-      integrations.map((item) =>
-        item.id === id ? { ...item, connected: !item.connected } : item
-      )
-    );
+  // Redirect to integrations page instead of fake local toggle
+  const toggleIntegration = (_id: string) => {
+    router.push("/dashboard/integrations");
   };
 
   if (isLoading || !user) {
@@ -211,11 +333,11 @@ export default function Dashboard() {
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 p-3.5 gap-4">
                       <div className="font-bold text-secondary">created_at</div>
-                      <div className="col-span-3 text-text-slate">{new Date(dbUser.created_at).toLocaleString()}</div>
+                      <div className="col-span-3 text-text-slate">{dbUser.created_at ? new Date(dbUser.created_at).toLocaleString() : "N/A"}</div>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 p-3.5 gap-4">
                       <div className="font-bold text-secondary">last_login_at</div>
-                      <div className="col-span-3 text-text-slate">{new Date(dbUser.last_login_at).toLocaleString()}</div>
+                      <div className="col-span-3 text-text-slate">{dbUser.last_login_at ? new Date(dbUser.last_login_at).toLocaleString() : "N/A"}</div>
                     </div>
                   </div>
                 </div>
@@ -259,7 +381,7 @@ export default function Dashboard() {
                   >
                     <div className="flex items-center gap-3.5">
                       <div className="p-2.5 rounded-xl bg-background-mist border-[1.5px] border-border-mist">
-                        <img src={platform.icon} alt={platform.name} className="w-6 h-6 object-contain" />
+                        <img src={platform.icon} alt={platform.name} className="w-6 h-6 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                       </div>
                       <div>
                         <h3 className="font-bold text-secondary text-[16px]">{platform.name}</h3>
@@ -322,9 +444,7 @@ export default function Dashboard() {
                   <span>Verified</span>
                 </span>
               )}
-            </div>
-
-            <div className="mt-8 pt-6 border-t-[2px] border-border-mist text-left space-y-4 text-[13px] font-medium text-text-slate">
+            </div>            <div className="mt-8 pt-6 border-t-[2px] border-border-mist text-left space-y-4 text-[13px] font-medium text-text-slate">
               <div className="flex justify-between">
                 <span>User ID:</span>
                 <span className="font-bold text-secondary font-mono break-all max-w-[150px]">{user.id}</span>
@@ -332,18 +452,18 @@ export default function Dashboard() {
               <div className="flex justify-between">
                 <span>Created:</span>
                 <span className="font-bold text-secondary">
-                  {new Date(user.createdAt).toLocaleDateString()}
+                  {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "N/A"}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span>Last Login:</span>
                 <span className="font-bold text-secondary">
-                  {new Date(user.updatedAt).toLocaleDateString()}
+                  {user.updatedAt ? new Date(user.updatedAt).toLocaleDateString() : "N/A"}
                 </span>
               </div>
             </div>
           </Card>
-
+ 
           {/* AI Assistant Quick Summary Card */}
           <Card className="neo-border neo-shadow-md bg-accent-purple/10 border-accent-purple text-secondary relative overflow-hidden">
             <div className="absolute top-[-20%] right-[-20%] w-24 h-24 rounded-full bg-accent-purple/20 blur-xl" />
@@ -352,8 +472,8 @@ export default function Dashboard() {
               <span className="font-display font-black text-lg">AI Assistant Summary</span>
             </div>
             <p className="text-[14px] leading-relaxed font-semibold">
-              "Welcome to Syncar! I've analyzed your connected Gmail and Slack threads. You have{" "}
-              <span className="text-primary font-bold">17 unread priority items</span>. A summary report is ready for your review."
+              &quot;Welcome to Syncra! Connect your communication platforms from the{" "}
+              <span className="text-primary font-bold">Integrations</span> page to enable AI-powered summaries and insights across your workspace.&quot;
             </p>
           </Card>
         </div>

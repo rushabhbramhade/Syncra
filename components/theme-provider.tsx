@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 
 type Theme = "light" | "dark";
 
@@ -17,16 +17,23 @@ const STORAGE_KEY = "syncra-theme";
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("light");
   const [mounted, setMounted] = useState(false);
+  const storageTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  /* Restore persisted theme on mount */
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
-    if (stored === "dark" || stored === "light") {
-      setThemeState(stored);
-    } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      setThemeState("dark");
-    }
-    setMounted(true);
+    const timer = setTimeout(() => {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
+        if (stored === "dark" || stored === "light") {
+          setThemeState(stored);
+        } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+          setThemeState("dark");
+        }
+      } catch {
+        // Ignore
+      }
+      setMounted(true);
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   /* Apply `.dark` class to <html> whenever theme changes */
@@ -38,7 +45,24 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     } else {
       root.classList.remove("dark");
     }
-    localStorage.setItem(STORAGE_KEY, theme);
+    
+    // Debounce localStorage writes to prevent conflicts
+    if (storageTimeoutRef.current) {
+      clearTimeout(storageTimeoutRef.current);
+    }
+    storageTimeoutRef.current = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, theme);
+      } catch {
+        // Ignore
+      }
+    }, 100);
+
+    return () => {
+      if (storageTimeoutRef.current) {
+        clearTimeout(storageTimeoutRef.current);
+      }
+    };
   }, [theme, mounted]);
 
   const toggleTheme = useCallback(() => {

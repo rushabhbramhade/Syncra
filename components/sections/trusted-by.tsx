@@ -3,37 +3,37 @@
 import React from "react";
 import ScrollVelocity from "../ui/ScrollVelocity";
 
+const logoItems = [
+  { icon: "▲", name: "Vercel" },
+  { icon: "⧉", name: "Linear" },
+  { icon: "💳", name: "Stripe" },
+  { icon: "🟦", name: "Framer" },
+  { icon: "⬛", name: "Notion" },
+  { icon: "🧭", name: "Arc" },
+  { icon: "⌘", name: "Raycast" },
+  { icon: "🏠", name: "Airbnb" },
+];
+
+const LogoRow = () => (
+  <div className="flex items-center">
+    {logoItems.map((logo, i) => (
+      <div
+        key={`logo-${i}`}
+        className="flex items-center gap-3.5 mx-8 md:mx-12 font-display font-black text-xl md:text-4xl text-secondary grayscale hover:grayscale-0 hover:scale-105 transition-all duration-300 ease-out cursor-pointer"
+      >
+        <span className="text-2xl md:text-3xl">{logo.icon}</span>
+        <span>{logo.name}</span>
+      </div>
+    ))}
+  </div>
+);
+
 export function TrustedBy() {
-  const logoItems = [
-    { icon: "▲", name: "Vercel" },
-    { icon: "⧉", name: "Linear" },
-    { icon: "💳", name: "Stripe" },
-    { icon: "🟦", name: "Framer" },
-    { icon: "⬛", name: "Notion" },
-    { icon: "🧭", name: "Arc" },
-    { icon: "⌘", name: "Raycast" },
-    { icon: "🏠", name: "Airbnb" },
-  ];
-
-  const LogoRow = () => (
-    <div className="flex items-center">
-      {logoItems.map((logo, i) => (
-        <div
-          key={`logo-${i}`}
-          className="flex items-center gap-3.5 mx-8 md:mx-12 font-display font-black text-xl md:text-4xl text-secondary grayscale hover:grayscale-0 hover:scale-105 transition-all duration-300 ease-out cursor-pointer"
-        >
-          <span className="text-2xl md:text-3xl">{logo.icon}</span>
-          <span>{logo.name}</span>
-        </div>
-      ))}
-    </div>
-  );
-
   return (
     <section className="py-12 bg-white border-y-[2.5px] border-secondary overflow-hidden select-none">
       <div className="max-w-[1280px] mx-auto px-6 md:px-12 flex flex-col items-center">
         <h2 className="font-mono text-xs uppercase tracking-widest text-text-slate mb-8">
-          TRUSTED BY MODERN TEAMS AT
+          SYNC CONVERSATIONS ACROSS ALL YOUR PLATFORMS
         </h2>
       </div>
 

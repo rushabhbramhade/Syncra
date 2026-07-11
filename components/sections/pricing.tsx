@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Check } from "lucide-react";
@@ -124,9 +125,11 @@ export function Pricing() {
                 </ul>
               </div>
 
-              <Button variant={plan.variant} size="lg" className="w-full">
-                {plan.cta}
-              </Button>
+              <Link href={plan.name === "Team" ? "mailto:support@syncra.ai" : "/sign-up"} className="w-full">
+                <Button variant={plan.variant} size="lg" className="w-full">
+                  {plan.cta}
+                </Button>
+              </Link>
             </Card>
           ))}
         </div>

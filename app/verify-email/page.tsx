@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { insforge } from "@/lib/insforge";
+import { verifyEmailAction, resendVerificationEmailAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ArrowRight, Mail, AlertCircle, CheckCircle, RefreshCw } from "lucide-react";
@@ -56,15 +56,12 @@ function VerifyEmailForm() {
     setIsLoading(true);
 
     try {
-      const { data, error } = await insforge.auth.verifyEmail({
-        email,
-        otp,
-      });
+      const { data, error } = await verifyEmailAction(email, otp);
 
       if (error) {
-        const errObj = error as any;
+        const errObj = error as { message?: string };
         setFormError(errObj.message || "Invalid or expired verification code.");
-      } else if (data?.accessToken) {
+      } else if (data) {
         setFormSuccess("Email verified successfully! Redirecting...");
         setTimeout(() => {
           router.push("/dashboard");
@@ -72,8 +69,9 @@ function VerifyEmailForm() {
       } else {
         setFormError("Verification failed. Please try again.");
       }
-    } catch (err: any) {
-      setFormError(err.message || "An error occurred. Please try again.");
+    } catch (err: unknown) {
+      const errorObj = err as { message?: string };
+      setFormError(errorObj.message || "An error occurred. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -88,10 +86,7 @@ function VerifyEmailForm() {
 
     try {
       const redirectUrl = window.location.origin + "/sign-in";
-      const { data, error } = await insforge.auth.resendVerificationEmail({
-        email,
-        redirectTo: redirectUrl,
-      });
+      const { data, error } = await resendVerificationEmailAction(email, redirectUrl);
 
       if (error) {
         setFormError(error.message || "Failed to resend verification code.");
@@ -99,8 +94,9 @@ function VerifyEmailForm() {
         setFormSuccess("A new verification code has been sent to your email.");
         setCountdown(60); // Reset timer to 60s
       }
-    } catch (err: any) {
-      setFormError(err.message || "An error occurred. Please try again.");
+    } catch (err: unknown) {
+      const errorObj = err as { message?: string };
+      setFormError(errorObj.message || "An error occurred. Please try again.");
     } finally {
       setIsResending(false);
     }
@@ -229,7 +225,7 @@ export default function VerifyEmail() {
             S
           </div>
           <span className="font-display font-black text-3xl tracking-tight text-secondary">
-            Syncar
+            Syncra
           </span>
         </div>
 
