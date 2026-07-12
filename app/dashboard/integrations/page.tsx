@@ -1102,6 +1102,9 @@ export default function IntegrationsPage() {
                       {`${typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/api/auth/callback/google`}
                     </div>
                   </li>
+                  <li className="mt-1">
+                    <strong>For Testing (Error 403: access_denied):</strong> If your OAuth app's Publishing Status is set to <em>Testing</em>, you must add the email address of the account you want to connect to the <strong>Test Users</strong> list under the <em>OAuth consent screen</em> tab in your Google Console.
+                  </li>
                 </ol>
               </div>
 

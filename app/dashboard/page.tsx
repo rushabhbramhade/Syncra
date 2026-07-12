@@ -76,15 +76,16 @@ export default function Dashboard() {
   const handleSignOut = async () => {
     setIsSignOutLoading(true);
     try {
-      clearSession();
       const { error } = await signOutAction();
       if (error) {
         console.error("Sign out action error:", error);
       }
+      clearSession();
       // Hard redirect to clear router cache and state
       window.location.href = "/sign-in";
     } catch (err) {
       console.error(err);
+      clearSession();
       window.location.href = "/sign-in";
     } finally {
       setIsSignOutLoading(false);
