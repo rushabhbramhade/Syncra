@@ -1103,7 +1103,7 @@ export default function IntegrationsPage() {
                     </div>
                   </li>
                   <li className="mt-1">
-                    <strong>For Testing (Error 403: access_denied):</strong> If your OAuth app's Publishing Status is set to <em>Testing</em>, you must add the email address of the account you want to connect to the <strong>Test Users</strong> list under the <em>OAuth consent screen</em> tab in your Google Console.
+                    <strong>For Testing (Error 403: access_denied):</strong> If your OAuth app&apos;s Publishing Status is set to <em>Testing</em>, you must add the email address of the account you want to connect to the <strong>Test Users</strong> list under the <em>OAuth consent screen</em> tab in your Google Console.
                   </li>
                 </ol>
               </div>

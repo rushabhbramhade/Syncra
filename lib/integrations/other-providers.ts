@@ -35,7 +35,7 @@ class StubProvider implements IntegrationProvider {
 }
 
 // Register stubs for remaining platforms to facilitate future scaling
-const STUB_IDS = ["slack", "whatsapp", "outlook", "discord", "telegram", "linkedin", "github"];
+const STUB_IDS = ["slack", "outlook", "discord", "telegram", "linkedin", "github"];
 STUB_IDS.forEach(id => {
   const name = id.charAt(0).toUpperCase() + id.slice(1);
   IntegrationRegistry.register(new StubProvider(id, name));

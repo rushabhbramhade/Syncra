@@ -174,20 +174,140 @@ export const PLATFORM_MCP_TOOLS: Record<string, MCPTool[]> = {
   ],
   whatsapp: [
     {
-      name: "whatsapp_send_message",
-      displayName: "Send Message",
-      description: "Send a text message to a WhatsApp number.",
+      name: "whatsapp_fetch_messages",
+      displayName: "Fetch Recent Messages",
+      description: "Fetch a list of recent messages across all WhatsApp chats.",
       inputSchema: {
         type: "object",
         properties: {
-          to: { type: "string", description: "WhatsApp number in international format." },
+          limit: { type: "number", description: "Max number of messages to fetch (default: 10)." },
+        },
+      },
+      arguments: [
+        { name: "limit", label: "Limit Results", type: "number", placeholder: "10", defaultValue: 10 },
+      ],
+    },
+    {
+      name: "whatsapp_read_chat",
+      displayName: "Read Chat History",
+      description: "Retrieve message history for a specific chat JID or contact.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          chatId: { type: "string", description: "The WhatsApp JID of the chat (e.g. 1234567890@s.whatsapp.net)." },
+          limit: { type: "number", description: "Max number of messages to fetch (default: 15)." },
+        },
+        required: ["chatId"],
+      },
+      arguments: [
+        { name: "chatId", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+        { name: "limit", label: "Limit Results", type: "number", placeholder: "15", defaultValue: 15 },
+      ],
+    },
+    {
+      name: "whatsapp_send_message",
+      displayName: "Send Message",
+      description: "Send a text message to a specific WhatsApp number or JID.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "WhatsApp number in international format or JID." },
           message: { type: "string", description: "Body of the message." },
         },
         required: ["to", "message"],
       },
       arguments: [
-        { name: "to", label: "WhatsApp Number", type: "string", placeholder: "+919876543210", required: true },
+        { name: "to", label: "WhatsApp Number/JID", type: "string", placeholder: "1234567890", required: true },
         { name: "message", label: "Message", type: "textarea", placeholder: "Hi! Sent from Syncra.", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_search_chats",
+      displayName: "Search Chats",
+      description: "Search for chats or messages matching a query.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Term or keyword to search for." },
+        },
+        required: ["query"],
+      },
+      arguments: [
+        { name: "query", label: "Search Term", type: "string", placeholder: "meeting", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_summarize_chat",
+      displayName: "Summarize Conversation",
+      description: "Generate an AI summary of recent messages in a chat.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          chatId: { type: "string", description: "The WhatsApp JID of the chat to summarize." },
+        },
+        required: ["chatId"],
+      },
+      arguments: [
+        { name: "chatId", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_get_contact",
+      displayName: "Get Contact Details",
+      description: "Retrieve profile and contact details for a specific WhatsApp JID.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          jid: { type: "string", description: "WhatsApp JID to inspect." },
+        },
+        required: ["jid"],
+      },
+      arguments: [
+        { name: "jid", label: "Contact JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_list_groups",
+      displayName: "List Groups",
+      description: "Retrieve a list of all participating WhatsApp group chats.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+      },
+      arguments: [],
+    },
+    {
+      name: "whatsapp_fetch_group_messages",
+      displayName: "Fetch Group Messages",
+      description: "Fetch recent messages from a specific WhatsApp group JID.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          groupId: { type: "string", description: "The JID of the group (e.g. 1112223333@g.us)." },
+          limit: { type: "number", description: "Max number of messages to fetch (default: 10)." },
+        },
+        required: ["groupId"],
+      },
+      arguments: [
+        { name: "groupId", label: "Group JID", type: "string", placeholder: "1112223333@g.us", required: true },
+        { name: "limit", label: "Limit Results", type: "number", placeholder: "10", defaultValue: 10 },
+      ],
+    },
+    {
+      name: "whatsapp_send_group_message",
+      displayName: "Send Group Message",
+      description: "Send a text message to a WhatsApp group JID.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          groupId: { type: "string", description: "The JID of the group (e.g. 1112223333@g.us)." },
+          message: { type: "string", description: "Body of the message." },
+        },
+        required: ["groupId", "message"],
+      },
+      arguments: [
+        { name: "groupId", label: "Group JID", type: "string", placeholder: "1112223333@g.us", required: true },
+        { name: "message", label: "Message", type: "textarea", placeholder: "Hello group!", required: true },
       ],
     },
   ],

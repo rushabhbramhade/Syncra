@@ -1,8 +1,6 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { insforge } from "@/lib/insforge";
 import { syncUserToDatabase, signOutAction, getCurrentUserAction } from "@/app/actions";
 
 export interface InsforgeUser {
@@ -42,7 +40,6 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
 
   // State — initialize from localStorage for instant hydration
   const [user, setUser] = useState<InsforgeUser | null>(() => {
@@ -156,7 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Do NOT redirect or clear session on timeout/network issue (prevent loops)
       setIsLoading(false);
     }
-  }, [clearSession, router]);
+  }, [clearSession]);
 
   useEffect(() => {
     isMounted.current = true;
