@@ -4,27 +4,20 @@
 :root {
   --background: #F8FAFC;
   --foreground: #111827;
-}
 
-.dark {
-  --background: #0B1120;
-  --foreground: #E2E8F0;
-}
-
-@theme {
-  --color-primary: #2563EB;
-  --color-secondary: #0F172A;
+  --color-primary: #4F46E5; /* Premium Indigo-600 */
+  --color-secondary: #0F172A; /* Slate-900 */
   
   --color-background-mist: #F8FAFC;
   --color-surface-white: #FFFFFF;
   --color-border-mist: #E2E8F0;
-  --color-text-ink: #111827;
-  --color-text-slate: #64748B;
+  --color-text-ink: #0F172A;
+  --color-text-slate: #475569;
   --color-text-fog: #94A3B8;
 
   /* Accent Palette */
-  --color-accent-purple: #8B5CF6;
-  --color-accent-green: #22C55E;
+  --color-accent-purple: #7C3AED;
+  --color-accent-green: #10B981;
   --color-accent-orange: #F59E0B;
   --color-accent-pink: #EC4899;
   --color-accent-yellow: #FACC15;
@@ -37,8 +30,71 @@
   --color-warning-bg: #FFFBEB;
   --color-error: #DC2626;
   --color-error-bg: #FEF2F2;
-  --color-info: #2563EB;
+  --color-info: #4F46E5;
   --color-info-bg: #EFF6FF;
+}
+
+.dark {
+  --background: #0B0F19; /* Premium Layer 1 Base background */
+  --foreground: #F8FAFC;
+
+  --color-primary: #818CF8; /* Indigo-400 */
+  --color-secondary: #F1F5F9; /* Slate-100 */
+  
+  --color-background-mist: #0B0F19; /* Base Background */
+  --color-surface-white: #141D33;    /* Premium Layer 2 Card Surface */
+  --color-border-mist: #1E2B4A;      /* Layer 2 border */
+  --color-text-ink: #F8FAFC;
+  --color-text-slate: #94A3B8;
+  --color-text-fog: #64748B;
+
+  /* Accent Palette */
+  --color-accent-purple: #A78BFA;
+  --color-accent-green: #34D399;
+  --color-accent-orange: #FBBF24;
+  --color-accent-pink: #F472B6;
+  --color-accent-yellow: #FDE047;
+  --color-accent-cyan: #22D3EE;
+
+  /* Semantic Feedback Colors */
+  --color-success: #4ADE80;
+  --color-success-bg: #052E16;
+  --color-warning: #FBBF24;
+  --color-warning-bg: #422006;
+  --color-error: #F87171;
+  --color-error-bg: #450A0A;
+  --color-info: #818CF8;
+  --color-info-bg: #172554;
+}
+
+@theme {
+  --color-primary: var(--color-primary);
+  --color-secondary: var(--color-secondary);
+  
+  --color-background-mist: var(--color-background-mist);
+  --color-surface-white: var(--color-surface-white);
+  --color-border-mist: var(--color-border-mist);
+  --color-text-ink: var(--color-text-ink);
+  --color-text-slate: var(--color-text-slate);
+  --color-text-fog: var(--color-text-fog);
+
+  /* Accent Palette */
+  --color-accent-purple: var(--color-accent-purple);
+  --color-accent-green: var(--color-accent-green);
+  --color-accent-orange: var(--color-accent-orange);
+  --color-accent-pink: var(--color-accent-pink);
+  --color-accent-yellow: var(--color-accent-yellow);
+  --color-accent-cyan: var(--color-accent-cyan);
+
+  /* Semantic Feedback Colors */
+  --color-success: var(--color-success);
+  --color-success-bg: var(--color-success-bg);
+  --color-warning: var(--color-warning);
+  --color-warning-bg: var(--color-warning-bg);
+  --color-error: var(--color-error);
+  --color-error-bg: var(--color-error-bg);
+  --color-info: var(--color-info);
+  --color-info-bg: var(--color-info-bg);
 
   /* Border Radii */
   --radius-btn: 18px;
@@ -48,10 +104,10 @@
   --radius-panel: 24px;
 
   /* Shadow System (Flat offsets, no blur) */
-  --shadow-flat-sm: 4px 4px 0 rgba(15, 23, 42, 0.15);
-  --shadow-flat-md: 6px 6px 0 rgba(15, 23, 42, 0.15);
-  --shadow-flat-lg: 8px 8px 0 rgba(15, 23, 42, 0.15);
-  --shadow-flat-hover: 10px 10px 0 rgba(15, 23, 42, 0.18);
+  --shadow-flat-sm: 4px 4px 0 rgba(15, 23, 42, 0.12);
+  --shadow-flat-md: 6px 6px 0 rgba(15, 23, 42, 0.12);
+  --shadow-flat-lg: 8px 8px 0 rgba(15, 23, 42, 0.12);
+  --shadow-flat-hover: 10px 10px 0 rgba(15, 23, 42, 0.15);
 
   /* Fonts */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
@@ -66,57 +122,47 @@ body {
   font-family: var(--font-sans);
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
-  transition: background-color 0.3s ease, color 0.3s ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* ══════════════════════════════════════════════
-   DARK MODE — Override all design tokens
-   Activated by .dark class on <html>
-   ══════════════════════════════════════════════ */
+/* Typography Headings polish */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+  font-weight: 700;
+}
+
+/* Light mode card visual improvements */
+body:not(.dark) .neo-border {
+  border: 2px solid var(--color-border-mist);
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 2px 8px -1px rgba(15, 23, 42, 0.03);
+}
+
+body:not(.dark) .neo-shadow-sm {
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+
+body:not(.dark) .neo-shadow-md {
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+}
+
+body:not(.dark) .neo-shadow-lg {
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+}
+
+/* Input elements default styling */
+input, textarea, select {
+  color: var(--color-text-ink);
+}
+input::placeholder, textarea::placeholder {
+  color: var(--color-text-fog);
+}
+
+/* Dark mode basic variables adjustments */
 .dark body {
-  background-color: #0B1120;
-  color: #E2E8F0;
+  background-color: var(--color-background-mist);
+  color: var(--color-text-ink);
 }
-
-/* ── Backgrounds & Surfaces ── */
-.dark .bg-background-mist { background-color: #0B1120 !important; }
-.dark .bg-surface-white    { background-color: #111827 !important; }
-
-/* ── Borders ── */
-.dark .border-border-mist { border-color: #1E293B !important; }
-.dark .border-secondary   { border-color: #334155 !important; }
-
-/* ── Text ── */
-.dark .text-secondary     { color: #F1F5F9 !important; }
-.dark .text-text-ink      { color: #E2E8F0 !important; }
-.dark .text-text-slate    { color: #94A3B8 !important; }
-.dark .text-text-fog      { color: #64748B !important; }
-
-/* ── Surface/Card internals ── */
-.dark .bg-background-mist\/30,
-.dark [class*="bg-background-mist"] { background-color: #0F1629 !important; }
-
-/* ── Neo-Brutalist Input/Search ── */
-.dark input,
-.dark textarea {
-  color: #E2E8F0 !important;
-}
-.dark input::placeholder,
-.dark textarea::placeholder {
-  color: #64748B !important;
-}
-
-/* ── Semantic Feedback Dark Overrides ── */
-.dark .bg-success-bg   { background-color: #052E16 !important; }
-.dark .bg-warning-bg   { background-color: #422006 !important; }
-.dark .bg-error-bg     { background-color: #450A0A !important; }
-.dark .bg-info-bg      { background-color: #172554 !important; }
-
-/* ── Notification / Dropdown panels ── */
-.dark .bg-surface-white\/95 { background-color: rgba(17, 24, 39, 0.97) !important; }
-
-/* ── Hover states ── */
-.dark .hover\:bg-border-mist:hover { background-color: #1E293B !important; }
 
 /* Custom Neo-Brutalist utility helper classes */
 .neo-border {

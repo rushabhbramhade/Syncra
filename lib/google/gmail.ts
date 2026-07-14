@@ -1,3 +1,7 @@
+import { getRedirectUri, getGoogleConfig } from "@/lib/oauth";
+
+const OAUTH_LOG_PREFIX = "[GmailOAuth]";
+
 export interface GmailProfile {
   emailAddress: string;
   messagesTotal: number;
@@ -90,27 +94,35 @@ function getHeader(headers: Array<{ name: string; value: string }>, name: string
 }
 
 export class GmailService {
-  private static clientId = process.env.GOOGLE_CLIENT_ID;
-  private static clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  private static clientId: string | undefined;
+  private static clientSecret: string | undefined;
+
+  static {
+    const config = getGoogleConfig();
+    GmailService.clientId = config.clientId;
+    GmailService.clientSecret = config.clientSecret;
+  }
 
   public static isConfigured(): boolean {
-    return !!(this.clientId && this.clientSecret);
+    return !!(GmailService.clientId && GmailService.clientSecret);
   }
 
   // Generate Google OAuth authorization URL
-  public static getAuthUrl(origin: string, state?: string): string {
+  public static getAuthUrl(_origin: string, state?: string): string {
     if (!this.isConfigured()) {
       throw new Error("Google OAuth credentials are not configured in environment variables.");
     }
-    const redirectUri = `${origin}/api/auth/callback/google`;
+    const redirectUri = getRedirectUri();
     const scopes = [
       "https://www.googleapis.com/auth/gmail.readonly",
       "https://www.googleapis.com/auth/gmail.send",
       "https://www.googleapis.com/auth/gmail.modify",
     ];
 
+    console.log(`${OAUTH_LOG_PREFIX} redirect_uri:`, redirectUri);
+
     const params: Record<string, string> = {
-      client_id: this.clientId!,
+      client_id: GmailService.clientId!,
       redirect_uri: redirectUri,
       response_type: "code",
       scope: scopes.join(" "),
@@ -127,7 +139,7 @@ export class GmailService {
   }
 
   // Exchange auth code for tokens
-  public static async exchangeCode(code: string, origin: string): Promise<{
+  public static async exchangeCode(code: string, _origin: string): Promise<{
     access_token: string;
     refresh_token: string;
     expires_in: number;
@@ -135,15 +147,17 @@ export class GmailService {
     if (!this.isConfigured()) {
       throw new Error("Google OAuth credentials are not configured.");
     }
-    const redirectUri = `${origin}/api/auth/callback/google`;
+    const redirectUri = getRedirectUri();
+
+    console.log(`${OAUTH_LOG_PREFIX} exchanging code with redirect_uri:`, redirectUri);
 
     const response = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code,
-        client_id: this.clientId!,
-        client_secret: this.clientSecret!,
+        client_id: GmailService.clientId!,
+        client_secret: GmailService.clientSecret!,
         redirect_uri: redirectUri,
         grant_type: "authorization_code",
       }),

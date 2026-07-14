@@ -2,6 +2,7 @@
 
 import React, { useEffect } from "react";
 import { usePathname } from "next/navigation";
+import { Lenis } from "lenis/react";
 
 export function ClientWrapper({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -15,5 +16,9 @@ export function ClientWrapper({ children }: { children: React.ReactNode }) {
     }
   }, [isDashboard]);
 
-  return <>{children}</>;
+  return (
+    <Lenis root options={{ autoRaf: true }}>
+      {children}
+    </Lenis>
+  );
 }

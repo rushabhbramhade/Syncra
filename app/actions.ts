@@ -1,9 +1,23 @@
 "use server";
 
-import { createAdminClient } from "@insforge/sdk";
 import { createAuthActions, createServerClient } from "@insforge/sdk/ssr";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { UsersRepository } from "@/lib/repositories/users-repository";
+import { createAdminDb } from "@/lib/db";
+
+async function retry<T>(fn: () => Promise<T>, retries = 3, delay = 500): Promise<T> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      console.warn(`syncUserToDatabase attempt ${i + 1} failed, retrying...`, err);
+      await new Promise((r) => setTimeout(r, delay * (i + 1)));
+    }
+  }
+  throw new Error("retry exhausted");
+}
 
 export async function syncUserToDatabase(userData: {
   auth_user_id: string;
@@ -14,130 +28,43 @@ export async function syncUserToDatabase(userData: {
   email_verified: boolean;
 }) {
   const now = new Date().toISOString();
+  const admin = createAdminDb();
+  const repo = new UsersRepository(admin);
 
-  // Return mock user for E2E tests to bypass real DB dependency
-  if (userData.email === "testuser@example.com") {
-    return {
-      id: "db_usr_123",
-      auth_user_id: userData.auth_user_id,
-      email: userData.email,
-      full_name: userData.full_name,
-      avatar_url: userData.avatar_url || null,
-      auth_provider: userData.auth_provider,
-      email_verified: userData.email_verified,
-      created_at: now,
-      last_login_at: now,
-    };
-  }
+  return retry(async () => {
+    const existingUser = await repo.findByAuthId(userData.auth_user_id);
 
-  const baseUrl = process.env.NEXT_PUBLIC_INSFORGE_BASE_URL;
-  const apiKey = process.env.INSFORGE_API_KEY;
+    if (!existingUser) {
+      const userByEmail = await repo.findByEmail(userData.email);
 
-  if (!baseUrl || !apiKey) {
-    throw new Error("Missing InsForge configuration in environment variables.");
-  }
-
-  const admin = createAdminClient({
-    baseUrl,
-    apiKey,
-  });
-
-  // 1. Check if user already exists in the users table by auth_user_id
-  let existingUser = null;
-  const { data: userByAuthId, error: checkError } = await admin.database
-    .from("users")
-    .select("*")
-    .eq("auth_user_id", userData.auth_user_id)
-    .maybeSingle();
-
-  if (checkError) {
-    console.error("Error checking user in DB:", checkError);
-    throw new Error(`Database error: ${checkError.message}`);
-  }
-  
-  existingUser = userByAuthId;
-
-  if (!existingUser) {
-    // Check if user exists by email
-    const { data: userByEmail, error: emailCheckError } = await admin.database
-      .from("users")
-      .select("*")
-      .eq("email", userData.email)
-      .maybeSingle();
-
-    if (emailCheckError) {
-      console.error("Error checking user by email:", emailCheckError);
-      throw new Error(`Database error: ${emailCheckError.message}`);
-    }
-
-    if (userByEmail) {
-      // Link the account by updating auth_user_id
-      const { data: updatedUser, error: updateIdError } = await admin.database
-        .from("users")
-        .update({
+      if (userByEmail) {
+        return repo.updateByEmail(userData.email, {
           auth_user_id: userData.auth_user_id,
           last_login_at: now,
           email_verified: userData.email_verified,
           full_name: userData.full_name === "New User" ? (userByEmail.full_name || "New User") : (userData.full_name || userByEmail.full_name || "New User"),
           avatar_url: userData.avatar_url || userByEmail.avatar_url,
-        })
-        .eq("email", userData.email)
-        .select()
-        .single();
-
-      if (updateIdError) {
-        console.error("Error updating user auth_user_id:", updateIdError);
-        throw new Error(`Update failed: ${updateIdError.message}`);
+        });
       }
 
-      return updatedUser;
-    }
-
-    // User not found in DB at all — inserting new record
-    const { data: insertedUser, error: insertError } = await admin.database
-      .from("users")
-      .insert([
-        {
-          auth_user_id: userData.auth_user_id,
-          email: userData.email,
-          full_name: userData.full_name,
-          avatar_url: userData.avatar_url || null,
-          auth_provider: userData.auth_provider,
-          email_verified: userData.email_verified,
-          last_login_at: now,
-        },
-      ])
-      .select()
-      .single();
-
-    if (insertError) {
-      console.error("Error inserting user:", insertError);
-      throw new Error(`Insert failed: ${insertError.message}`);
-    }
-
-    return insertedUser;
-  } else {
-    // User found in DB — updating last_login_at
-    // Update existing user record (preserving name if it was set)
-    const { data: updatedUser, error: updateError } = await admin.database
-      .from("users")
-      .update({
-        last_login_at: now,
+      return repo.upsertByAuthId({
+        auth_user_id: userData.auth_user_id,
+        email: userData.email,
+        full_name: userData.full_name,
+        avatar_url: userData.avatar_url || null,
+        auth_provider: userData.auth_provider,
         email_verified: userData.email_verified,
-        full_name: userData.full_name === "New User" ? (existingUser.full_name || "New User") : (userData.full_name || existingUser.full_name || "New User"),
-        avatar_url: userData.avatar_url || existingUser.avatar_url,
-      })
-      .eq("auth_user_id", userData.auth_user_id)
-      .select()
-      .single();
-
-    if (updateError) {
-      console.error("Error updating user:", updateError);
-      throw new Error(`Update failed: ${updateError.message}`);
+        last_login_at: now,
+      });
     }
 
-    return updatedUser;
-  }
+    return repo.updateByAuthId(userData.auth_user_id, {
+      last_login_at: now,
+      email_verified: userData.email_verified,
+      full_name: userData.full_name === "New User" ? (existingUser.full_name || "New User") : (userData.full_name || existingUser.full_name || "New User"),
+      avatar_url: userData.avatar_url || existingUser.avatar_url,
+    });
+  });
 }
 
 export async function signInAction(email: string, password: string) {
@@ -168,12 +95,7 @@ export async function signOutAction() {
     anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
     cookies: cookieStore,
   });
-  try {
-    return await auth.signOut();
-  } catch (err) {
-    console.error("Sign out SDK error:", err);
-    return { error: null };
-  }
+  return await auth.signOut();
 }
 
 export async function verifyEmailAction(email: string, otp: string) {
@@ -228,33 +150,36 @@ export async function signInWithGoogleAction(redirectTo: string) {
 
 export async function getCurrentUserAction() {
   const cookieStore = await cookies();
-  const token = cookieStore.get("insforge_access_token")?.value;
 
-  if (token && token.endsWith(".signature")) {
-    try {
-      const parts = token.split(".");
-      const payloadBase64 = parts[1];
-      const payloadStr = Buffer.from(payloadBase64, "base64").toString("utf-8");
-      const payload = JSON.parse(payloadStr);
-      return {
-        data: {
-          user: {
-            id: payload.sub || "123e4567-e89b-12d3-a456-426614174000",
-            email: payload.email || "testuser@example.com",
-            emailVerified: true,
-            providers: ["email"],
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            profile: {
-              name: "Test User",
-              avatar_url: null
-            }
+  // E2E Test Mock Auth Bypass — development/test only
+  if (process.env.NODE_ENV !== "production") {
+    const token = cookieStore.get("insforge_access_token")?.value;
+    if (token) {
+      try {
+        const parts = token.split(".");
+        if (parts.length === 3) {
+          const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+          if (payload.email === "testuser@example.com") {
+            return {
+              data: {
+                user: {
+                  id: payload.sub,
+                  email: payload.email,
+                  emailVerified: true,
+                  providers: ["email"],
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                  profile: {
+                    name: "Test User",
+                    avatar_url: null
+                  }
+                }
+              },
+              error: null
+            };
           }
-        },
-        error: null
-      };
-    } catch {
-      // Fallback to real auth flow if parsing fails
+        }
+      } catch {}
     }
   }
 

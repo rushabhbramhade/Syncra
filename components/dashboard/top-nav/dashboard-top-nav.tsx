@@ -7,7 +7,6 @@ import {
   Search,
   Sparkles,
   Plus,
-  Bell,
   Menu,
   ChevronRight,
   User as UserIcon,
@@ -15,6 +14,7 @@ import {
   Moon,
 } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
+import { NotificationBadge } from "@/components/notifications/notification-badge";
 
 /* ── Breadcrumb Helpers ── */
 const ROUTE_LABELS: Record<string, string> = {
@@ -84,45 +84,6 @@ export function DashboardTopNav({ onMobileMenuOpen }: DashboardTopNavProps) {
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === "dark";
   const [searchFocused, setSearchFocused] = React.useState(false);
-  const [notifOpen, setNotifOpen] = React.useState(false);
-  const notifRef = React.useRef<HTMLDivElement>(null);
-
-  /* Close notifications on outside click */
-  React.useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
-        setNotifOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  const mockNotifications = [
-    {
-      id: 1,
-      title: "New message in #general",
-      desc: "Sarah mentioned you in Slack",
-      time: "2m ago",
-      unread: true,
-    },
-    {
-      id: 2,
-      title: "Task completed",
-      desc: "Q3 Report has been finalized",
-      time: "15m ago",
-      unread: true,
-    },
-    {
-      id: 3,
-      title: "Calendar reminder",
-      desc: "Team standup in 30 minutes",
-      time: "28m ago",
-      unread: false,
-    },
-  ];
-
-  const unreadCount = mockNotifications.filter((n) => n.unread).length;
 
   return (
     <header
@@ -205,70 +166,8 @@ export function DashboardTopNav({ onMobileMenuOpen }: DashboardTopNavProps) {
         </button>
 
         {/* Notifications */}
-        <div className="relative" ref={notifRef}>
-          <button
-            onClick={() => setNotifOpen((v) => !v)}
-            className="relative p-2 rounded-xl hover:bg-border-mist text-text-slate transition-colors"
-            aria-label="Notifications"
-          >
-            <Bell className="w-5 h-5" />
-            {unreadCount > 0 && (
-              <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-error border-2 border-surface-white animate-pulse" />
-            )}
-          </button>
-
-          {/* Notification dropdown */}
-          {notifOpen && (
-            <div
-              className="
-                absolute right-0 top-full mt-2
-                w-[340px] bg-surface-white
-                border-[2.5px] border-secondary rounded-2xl
-                shadow-lg overflow-hidden z-50
-              "
-            >
-              <div className="flex items-center justify-between px-4 py-3 border-b-[2px] border-border-mist">
-                <h3 className="font-display font-black text-[15px] text-secondary">
-                  Notifications
-                </h3>
-                {unreadCount > 0 && (
-                  <span className="text-[12px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
-                    {unreadCount} new
-                  </span>
-                )}
-              </div>
-              <div className="max-h-[280px] overflow-y-auto">
-                {mockNotifications.map((notif) => (
-                  <div
-                    key={notif.id}
-                    className={`
-                      flex items-start gap-3 px-4 py-3 border-b border-border-mist/60
-                      hover:bg-background-mist transition-colors cursor-pointer
-                      ${notif.unread ? "bg-primary/[0.03]" : ""}
-                    `}
-                  >
-                    <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${notif.unread ? "bg-primary" : "bg-transparent"}`} />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-bold text-[13px] text-secondary truncate">
-                        {notif.title}
-                      </p>
-                      <p className="text-[12px] text-text-slate mt-0.5 truncate">
-                        {notif.desc}
-                      </p>
-                    </div>
-                    <span className="text-[11px] text-text-fog font-medium flex-shrink-0 mt-0.5">
-                      {notif.time}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <div className="px-4 py-2.5 border-t-[2px] border-border-mist">
-                <button className="w-full text-center text-[13px] font-bold text-primary hover:underline">
-                  View all notifications
-                </button>
-              </div>
-            </div>
-          )}
+        <div className="relative flex items-center">
+          <NotificationBadge />
         </div>
 
         {/* Theme Toggle */}

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { Button } from "@/components/ui/button";
@@ -9,11 +10,15 @@ import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
 import {
   getGmailConnectionStatus,
   disconnectGmailConnection,
-  executeGmailMCPAction,
   checkGoogleApiConfig,
   getProviderTools,
   ConnectionStatus
 } from "@/app/actions/integrations";
+import {
+  requestWhatsAppPairingCodeAction,
+  getWhatsAppStatusAction,
+  disconnectWhatsAppAction
+} from "@/app/actions/whatsapp";
 import {
   Mail,
   Settings,
@@ -23,21 +28,228 @@ import {
   Search,
   AlertCircle,
   X,
-  RefreshCw,
   Send,
-  Plus,
   FileText,
   Loader2,
-  Lock,
   AlertTriangle,
-  Info,
   Trash2,
   Archive,
   CornerUpLeft,
   Paperclip,
-  ExternalLink
+  ExternalLink,
+  Smartphone,
+  Link,
+  ChevronDown
 } from "lucide-react";
 
+function flagEmoji(iso: string): string {
+  if (!iso || iso.length !== 2) return "";
+  const codePoints = iso
+    .toUpperCase()
+    .split("")
+    .map((c) => 127397 + c.charCodeAt(0));
+  return String.fromCodePoint(...codePoints);
+}
+
+const COUNTRIES = [
+  { code: "+1", iso: "US", name: "United States" },
+  { code: "+91", iso: "IN", name: "India" },
+  { code: "+44", iso: "GB", name: "United Kingdom" },
+  { code: "+49", iso: "DE", name: "Germany" },
+  { code: "+33", iso: "FR", name: "France" },
+  { code: "+61", iso: "AU", name: "Australia" },
+  { code: "+55", iso: "BR", name: "Brazil" },
+  { code: "+81", iso: "JP", name: "Japan" },
+  { code: "+65", iso: "SG", name: "Singapore" },
+  { code: "+971", iso: "AE", name: "UAE" },
+  { code: "+86", iso: "CN", name: "China" },
+  { code: "+7", iso: "RU", name: "Russia" },
+  { code: "+27", iso: "ZA", name: "South Africa" },
+  { code: "+234", iso: "NG", name: "Nigeria" },
+  { code: "+52", iso: "MX", name: "Mexico" },
+  { code: "+62", iso: "ID", name: "Indonesia" },
+  { code: "+39", iso: "IT", name: "Italy" },
+  { code: "+34", iso: "ES", name: "Spain" },
+  { code: "+31", iso: "NL", name: "Netherlands" },
+  { code: "+41", iso: "CH", name: "Switzerland" },
+  { code: "+46", iso: "SE", name: "Sweden" },
+  { code: "+47", iso: "NO", name: "Norway" },
+  { code: "+48", iso: "PL", name: "Poland" },
+  { code: "+90", iso: "TR", name: "Turkey" },
+  { code: "+966", iso: "SA", name: "Saudi Arabia" },
+  { code: "+54", iso: "AR", name: "Argentina" },
+  { code: "+64", iso: "NZ", name: "New Zealand" }
+];
+
+interface CountryDropdownPortalProps {
+  selectedCountry: typeof COUNTRIES[0];
+  countrySearch: string;
+  setCountrySearch: (value: string) => void;
+  setSelectedCountry: (country: typeof COUNTRIES[0]) => void;
+  setShowCountryDropdown: (show: boolean) => void;
+  triggerRef: React.RefObject<HTMLElement | null>;
+  whatsappPhoneInputId: string;
+}
+
+function CountryDropdownPortal({
+  selectedCountry,
+  countrySearch,
+  setCountrySearch,
+  setSelectedCountry,
+  setShowCountryDropdown,
+  triggerRef,
+  whatsappPhoneInputId,
+}: CountryDropdownPortalProps) {
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      if (!trigger || !dropdownRef.current) return;
+
+      const triggerRect = trigger.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const viewportWidth = window.innerWidth;
+
+      const spaceBelow = viewportHeight - triggerRect.bottom;
+      const spaceAbove = triggerRect.top;
+
+      const preferredHeight = 280;
+      const dropdownWidth = triggerRect.width;
+
+      let top: number;
+      let left = triggerRect.left;
+
+      if (spaceBelow < preferredHeight && spaceAbove > spaceBelow) {
+        top = triggerRect.top - preferredHeight - 6;
+      } else {
+        top = triggerRect.bottom + 6;
+      }
+
+      if (left + dropdownWidth > viewportWidth - 16) {
+        left = viewportWidth - dropdownWidth - 16;
+      }
+      if (left < 16) left = 16;
+
+      setDropdownStyle({
+        position: 'fixed',
+        top: `${top}px`,
+        left: `${left}px`,
+        width: `${dropdownWidth}px`,
+        maxHeight: `${preferredHeight}px`,
+        zIndex: 9999,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener('scroll', updatePosition, { passive: true });
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      window.removeEventListener('scroll', updatePosition);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [triggerRef]);
+
+  useEffect(() => {
+    searchInputRef.current?.focus();
+  }, []);
+
+  const handleClickOutside = useCallback((event: MouseEvent) => {
+    if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      const trigger = triggerRef.current;
+      if (trigger && !trigger.contains(event.target as Node)) {
+        setShowCountryDropdown(false);
+        setCountrySearch("");
+      }
+    }
+  }, [setShowCountryDropdown, setCountrySearch, triggerRef]);
+
+  useEffect(() => {
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [handleClickOutside]);
+
+  const filteredCountries = COUNTRIES.filter(c =>
+    c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
+    c.code.includes(countrySearch)
+  );
+
+  return (
+    <div
+      ref={dropdownRef}
+      style={dropdownStyle}
+      className="bg-white dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl animate-in fade-in-50 slide-in-from-top-1 duration-150 flex flex-col"
+      role="listbox"
+    >
+      {/* Sticky Search box */}
+      <div className="shrink-0 bg-white dark:bg-[#0B1120] px-2 pt-2 pb-1.5 border-b border-slate-100 dark:border-slate-800/80 rounded-t-xl">
+        <div className="relative">
+          <Search className="w-4 h-4 text-slate-400 dark:text-slate-450 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={countrySearch}
+            onChange={(e) => setCountrySearch(e.target.value)}
+            placeholder="Search country or code..."
+            className="w-full h-10 pl-9 pr-8 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 text-[13px] font-medium rounded-lg outline-none focus:border-slate-300 dark:focus:border-slate-600 focus:ring-1 focus:ring-slate-300 dark:focus:ring-slate-600 transition-all text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500"
+            autoFocus
+          />
+          {countrySearch && (
+            <button
+              type="button"
+              onClick={() => setCountrySearch("")}
+              className="p-1 absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-md transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Scrollable Country List */}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-1 space-y-0.5" role="listbox">
+        {filteredCountries.length > 0 ? (
+          filteredCountries.map((country) => {
+            const isSelected = country.code === selectedCountry.code;
+            return (
+              <button
+                key={country.name + country.code}
+                type="button"
+                onClick={() => {
+                  setSelectedCountry(country);
+                  setShowCountryDropdown(false);
+                  setCountrySearch("");
+                  document.getElementById(whatsappPhoneInputId)?.focus();
+                }}
+                role="option"
+                aria-selected={isSelected}
+                className={`
+                  w-full flex items-center justify-between px-3 py-2.5 text-[14px] font-medium rounded-lg transition-all duration-150 cursor-pointer text-left
+                  ${isSelected
+                    ? "bg-[#25D366]/10 text-[#128C7E] dark:bg-[#25D366]/20 dark:text-[#25D366]"
+                    : "hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300"
+                  }
+                `}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-xl leading-none">{flagEmoji(country.iso)}</span>
+                  <span className="truncate font-semibold">{country.name}</span>
+                </div>
+                <span className="text-[13px] font-bold text-slate-500 dark:text-slate-400 font-mono">{country.code}</span>
+              </button>
+            );
+          })
+        ) : (
+          <div className="py-5 text-center text-[12.5px] text-slate-500 dark:text-slate-500 font-medium">
+            No countries found
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 interface Platform {
   id: string;
@@ -47,25 +259,7 @@ interface Platform {
   hasOAuth: boolean;
 }
 
-interface GmailInboxEmail {
-  id: string;
-  threadId?: string;
-  from: string;
-  to: string;
-  subject: string;
-  date: string;
-  snippet: string;
-  unread: boolean;
-}
 
-interface GmailEmailDetails {
-  from: string;
-  to: string;
-  date: string;
-  subject: string;
-  body: string;
-  
-}
 
 // Platforms list with details
 const PLATFORMS = [
@@ -144,15 +338,6 @@ export default function IntegrationsPage() {
   // Non-Gmail mock connections (loaded from localStorage for prototype integration)
   const [mockConnectedList, setMockConnectedList] = useState<string[]>([]);
   
-  // Gmail Inbox States
-  const [gmailQuery, setGmailQuery] = useState("is:unread");
-  const [gmailLimit] = useState(5);
-  const [gmailInboxData, setGmailInboxData] = useState<GmailInboxEmail[] | null>(null);
-  const [selectedInboxEmail, setSelectedInboxEmail] = useState<string | null>(null);
-  const [emailDetailLoading, setEmailDetailLoading] = useState(false);
-  const [emailDetails, setEmailDetails] = useState<GmailEmailDetails | null>(null);
-  const [isInboxRefreshing, setIsInboxRefreshing] = useState(false);
-
   // Settings / MCP Explorer States
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settingsPlatform, setSettingsPlatform] = useState<Platform | null>(null);
@@ -165,14 +350,134 @@ export default function IntegrationsPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Gmail Compose Mock States
-  const [showComposeModal, setShowComposeModal] = useState(false);
-  const [composeTo, setComposeTo] = useState("");
-  const [composeSubject, setComposeSubject] = useState("");
-  const [composeBody, setComposeBody] = useState("");
-  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  // WhatsApp Integration states
+  const [whatsappStatus, setWhatsAppStatus] = useState<ConnectionStatus | null>(null);
+  const [showWhatsAppConnectModal, setShowWhatsAppConnectModal] = useState(false);
+  const [whatsappPhoneNumber, setWhatsAppPhoneNumber] = useState("");
+  const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
+  const [showCountryDropdown, setShowCountryDropdown] = useState(false);
+  const [countrySearch, setCountrySearch] = useState("");
+  const [whatsappPairingCode, setWhatsAppPairingCode] = useState("");
+  const [isGeneratingPairingCode, setIsGeneratingPairingCode] = useState(false);
+  const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const countryTriggerRef = useRef<HTMLButtonElement>(null);
+  const phoneInputRef = useRef<HTMLDivElement>(null);
 
-  // Fetch page data — failures here show inline errors, never redirect
+  const stopWhatsAppPolling = useCallback(() => {
+    if (pollingTimerRef.current) {
+      clearInterval(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
+  }, []);
+
+  const startWhatsAppPolling = useCallback((userId: string) => {
+    stopWhatsAppPolling();
+
+    pollingTimerRef.current = setInterval(async () => {
+      try {
+        const res = await getWhatsAppStatusAction(userId);
+        if (res.success && res.status) {
+          if (res.status.status === "active") {
+            stopWhatsAppPolling();
+            setWhatsAppStatus(res.status);
+            setSuccessMessage("WhatsApp connected successfully!");
+            setShowWhatsAppConnectModal(false);
+            setWhatsAppPairingCode("");
+            setWhatsAppPhoneNumber("");
+            setSelectedCountry(COUNTRIES[0]);
+            setShowCountryDropdown(false);
+            setCountrySearch("");
+          } else {
+            setWhatsAppStatus(res.status);
+          }
+        }
+      } catch (err) {
+        console.error("Error polling WhatsApp connection status:", err);
+      }
+    }, 3000);
+  }, [stopWhatsAppPolling]);
+
+  const handleWhatsAppConnectClick = () => {
+    setWhatsAppPhoneNumber("");
+    setSelectedCountry(COUNTRIES[0]);
+    setShowCountryDropdown(false);
+    setCountrySearch("");
+    setWhatsAppPairingCode("");
+    setShowWhatsAppConnectModal(true);
+  };
+
+  const handleGenerateWhatsAppPairingCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!whatsappPhoneNumber.trim() || !user) return;
+    setIsGeneratingPairingCode(true);
+    setErrorMessage(null);
+    try {
+      let cleanInput = whatsappPhoneNumber.trim().replace(/\D/g, "");
+      const countryDigits = selectedCountry.code.replace(/\D/g, "");
+      if (cleanInput.startsWith(countryDigits)) {
+        cleanInput = cleanInput.substring(countryDigits.length);
+      }
+      const fullNumber = `${countryDigits}${cleanInput}`;
+      
+      const res = await requestWhatsAppPairingCodeAction(user.id, fullNumber);
+      if (res.success && res.pairingCode) {
+        setWhatsAppPairingCode(res.pairingCode);
+        startWhatsAppPolling(user.id);
+      } else {
+        setErrorMessage(res.error || "Failed to generate pairing code.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "An unexpected error occurred.";
+      setErrorMessage(msg);
+    } finally {
+      setIsGeneratingPairingCode(false);
+    }
+  };
+
+  const handleWhatsAppDisconnect = async () => {
+    if (!user) return;
+    try {
+      stopWhatsAppPolling();
+      const res = await disconnectWhatsAppAction(user.id);
+      if (res.success) {
+        setWhatsAppStatus(null);
+        setWhatsAppPairingCode("");
+        setWhatsAppPhoneNumber("");
+        setSelectedCountry(COUNTRIES[0]);
+        setShowCountryDropdown(false);
+        setCountrySearch("");
+        setSuccessMessage("WhatsApp disconnected successfully.");
+      } else {
+        setErrorMessage(res.error || "Failed to disconnect WhatsApp.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to disconnect WhatsApp.";
+      setErrorMessage(msg);
+    }
+  };
+
+useEffect(() => {
+    return () => {
+      if (pollingTimerRef.current) {
+        clearInterval(pollingTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && showWhatsAppConnectModal) {
+        stopWhatsAppPolling();
+        setShowWhatsAppConnectModal(false);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showWhatsAppConnectModal, stopWhatsAppPolling]);
+
+  // Fetch page data â€” failures here show inline errors, never redirect
   const fetchPageData = useCallback(async (userId: string) => {
     if (typeof window === "undefined") return;
     if (!isMounted.current) return;
@@ -182,18 +487,25 @@ export default function IntegrationsPage() {
         const timeout = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("DATA_FETCH_TIMEOUT")), 8000)
         );
-        const [gmailConn, isConfigured] = await Promise.race([
+        const [gmailConn, whatsappConnResult, isConfigured] = await Promise.race([
           Promise.all([
             getGmailConnectionStatus(userId),
+            getWhatsAppStatusAction(userId),
             checkGoogleApiConfig(),
           ]),
           timeout.then(() => { throw new Error("DATA_FETCH_TIMEOUT"); })
-        ]) as [ConnectionStatus | null, boolean];
+        ]) as [ConnectionStatus | null, { success: boolean; status: ConnectionStatus | null; error?: string }, boolean];
         if (!isMounted.current) return;
         setGmailStatus(gmailConn);
+        if (whatsappConnResult && whatsappConnResult.success) {
+          setWhatsAppStatus(whatsappConnResult.status);
+          if (whatsappConnResult.status?.status === "pairing") {
+            startWhatsAppPolling(userId);
+          }
+        }
         setIsGoogleConfiguredOnServer(isConfigured);
       } catch (dataErr: unknown) {
-        // Data load failed — log it but do NOT redirect
+        // Data load failed â€” log it but do NOT redirect
         const errObj = dataErr as { message?: string };
         if (errObj?.message === "DATA_FETCH_TIMEOUT") {
           console.warn("[Integrations] Page data fetch timed out, showing page without connection status.");
@@ -241,7 +553,7 @@ export default function IntegrationsPage() {
     } finally {
       if (isMounted.current) setIsDataLoading(false);
     }
-  }, []);
+  }, [startWhatsAppPolling]);
 
   const hasFetched = useRef(false);
 
@@ -287,62 +599,6 @@ export default function IntegrationsPage() {
     }
   }, [searchParams, router]);
 
-  // Fetch Gmail inbox via MCP
-  const loadGmailInbox = useCallback(async () => {
-    if (!user || !gmailStatus) return;
-    setIsInboxRefreshing(true);
-    try {
-      const response = await executeGmailMCPAction(user.id, "gmail_search_emails", {
-        query: gmailQuery,
-        limit: gmailLimit
-      });
-      if (response.status === "success") {
-        setGmailInboxData(response.result);
-      } else {
-        console.error("Gmail MCP search failed:", response.error);
-        setGmailInboxData(null);
-      }
-    } catch (e) {
-      console.error(e);
-      setGmailInboxData(null);
-    } finally {
-      setIsInboxRefreshing(false);
-    }
-  }, [user, gmailStatus, gmailQuery, gmailLimit]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (gmailStatus) {
-        loadGmailInbox();
-      } else {
-        setGmailInboxData(null);
-      }
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [gmailStatus, loadGmailInbox]);
-
-  // Fetch Gmail single email detail
-  const handleFetchEmailDetail = async (id: string) => {
-    if (!user) return;
-    setSelectedInboxEmail(id);
-    setEmailDetailLoading(true);
-    setEmailDetails(null);
-    try {
-      const response = await executeGmailMCPAction(user.id, "gmail_get_email", { messageId: id });
-      if (response.status === "success") {
-        setEmailDetails(response.result);
-      } else {
-        setErrorMessage("Failed to retrieve email detail: " + (response.error?.message || "Unknown error"));
-        setSelectedInboxEmail(null);
-      }
-    } catch (e) {
-      console.error(e);
-      setSelectedInboxEmail(null);
-    } finally {
-      setEmailDetailLoading(false);
-    }
-  };
-
   // Gmail OAuth Connect Click
   const handleGmailConnect = async () => {
     if (!user) return;
@@ -352,7 +608,7 @@ export default function IntegrationsPage() {
     }
     
     // Redirect browser to the OAuth API initiator route with userId parameter
-    window.location.assign(`/api/auth/google?userId=${user.id}`);
+    window.location.assign(`/api/google?userId=${user.id}`);
   };
 
   // Gmail Disconnect Click
@@ -362,47 +618,12 @@ export default function IntegrationsPage() {
     try {
       await disconnectGmailConnection(user.id);
       setGmailStatus(null);
-      setGmailInboxData(null);
       setSuccessMessage("Gmail connection has been successfully disconnected and tokens revoked.");
     } catch (e: unknown) {
       const errorObj = e as { message?: string };
       setErrorMessage("Failed to disconnect Gmail: " + (errorObj.message || "Unknown error"));
     } finally {
       setIsDataLoading(false);
-    }
-  };
-
-  // Compose Email (Mock/Send)
-  const handleSendCompose = async () => {
-    if (!user) return;
-    if (!composeTo || !composeSubject || !composeBody) {
-      setErrorMessage("Please fill in all fields (recipient, subject, and message body).");
-      return;
-    }
-    setIsSendingEmail(true);
-    try {
-      const response = await executeGmailMCPAction(user.id, "gmail_send_email", {
-        to: composeTo,
-        subject: composeSubject,
-        body: composeBody
-      });
-      if (response.status === "success") {
-        setSuccessMessage(`Email successfully sent to ${composeTo}!`);
-        setShowComposeModal(false);
-        // Refresh inbox
-        loadGmailInbox();
-        // Clear
-        setComposeTo("");
-        setComposeSubject("");
-        setComposeBody("");
-      } else {
-        setErrorMessage("Failed to send email: " + (response.error?.message || "Unknown error"));
-      }
-    } catch (e: unknown) {
-      const errorObj = e as { message?: string };
-      setErrorMessage("Failed to send email: " + (errorObj.message || "Unknown error"));
-    } finally {
-      setIsSendingEmail(false);
     }
   };
 
@@ -576,493 +797,385 @@ export default function IntegrationsPage() {
         </div>
       )}
 
-      {/* Main Layout Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+      {/* Main Layout Stack */}
+      <div className="space-y-8 max-w-5xl mx-auto">
         
-        {/* Left 2 Columns: Platforms Grid */}
-        <div className="lg:col-span-2 space-y-8">
-          <Card className="neo-border neo-shadow-md bg-surface-white">
-            <div className="border-b-[2.5px] border-border-mist pb-6 mb-6">
-              <h2 className="font-display font-black text-2xl text-secondary mb-1">
-                Workspace Channels
-              </h2>
-              <p className="text-text-slate text-[15px] font-medium">
-                Add platform connections to grant the Syncra AI Agent access.
-              </p>
-            </div>
+        {/* Workspace Channels */}
+        <Card className="neo-border neo-shadow-md bg-surface-white">
+          <div className="border-b-[2.5px] border-border-mist pb-6 mb-6">
+            <h2 className="font-display font-black text-2xl text-secondary mb-1">
+              Workspace Channels
+            </h2>
+            <p className="text-text-slate text-[15px] font-medium">
+              Add platform connections to grant the Syncra AI Agent access.
+            </p>
+          </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {PLATFORMS.map((platform) => {
-                // Determine connection state (Gmail checks real state, others check mock list)
-                const isGmail = platform.id === "gmail";
-                const isConnected = isGmail ? !!gmailStatus : mockConnectedList.includes(platform.id);
-                
-                return (
-                  <div
-                    key={platform.id}
-                    className={`relative p-6 rounded-[22px] border-[2.5px] bg-surface-white flex flex-col items-center text-center justify-between min-h-[350px] transition-all duration-300 ${
-                      isConnected
-                        ? "border-secondary dark:border-white shadow-flat-md"
-                        : "border-border-mist opacity-80 hover:opacity-100 hover:border-text-fog hover:shadow-flat-sm"
-                    }`}
-                  >
-                    {/* 1. Platform logo, centered in the card */}
-                    <div className="w-16 h-16 rounded-2xl bg-background-mist border-[1.5px] border-border-mist flex items-center justify-center overflow-hidden mb-4 shrink-0 shadow-inner">
-                      {platform.icon ? (
-                        <img
-                          src={platform.icon}
-                          alt={platform.name}
-                          className="w-10 h-10 object-contain"
-                        />
-                      ) : platform.id === "linkedin" ? (
-                        renderLinkedInIcon()
-                      ) : (
-                        renderGitHubIcon()
-                      )}
-                    </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {PLATFORMS.map((platform) => {
+              // Determine connection state (Gmail & WhatsApp check real state, others check mock list)
+              const isGmail = platform.id === "gmail";
+              const isWhatsApp = platform.id === "whatsapp";
+              const isConnected = isGmail
+                ? !!gmailStatus
+                : isWhatsApp
+                ? (!!whatsappStatus && whatsappStatus.status === "active")
+                : mockConnectedList.includes(platform.id);
+              
+              return (
+                <div
+                  key={platform.id}
+                  className={`relative p-6 rounded-[22px] border-[2.5px] bg-surface-white flex flex-col items-center text-center justify-between min-h-[350px] transition-all duration-300 ${
+                    isConnected
+                      ? "border-secondary dark:border-white shadow-flat-md"
+                      : "border-border-mist opacity-80 hover:opacity-100 hover:border-text-fog hover:shadow-flat-sm"
+                  }`}
+                >
+                  {/* 1. Platform logo, centered in the card */}
+                  <div className="w-16 h-16 rounded-2xl bg-background-mist border-[1.5px] border-border-mist flex items-center justify-center overflow-hidden mb-4 shrink-0 shadow-inner">
+                    {platform.icon ? (
+                      <img
+                        src={platform.icon}
+                        alt={platform.name}
+                        className="w-10 h-10 object-contain"
+                      />
+                    ) : platform.id === "linkedin" ? (
+                      renderLinkedInIcon()
+                    ) : (
+                      renderGitHubIcon()
+                    )}
+                  </div>
 
-                    {/* 2. Platform name, below the logo */}
-                    <div className="space-y-1.5 mb-2.5 shrink-0">
-                      <h3 className="font-display font-black text-xl text-secondary">
-                        {platform.name}
-                      </h3>
-                      {isConnected ? (
-                        <div className="flex justify-center">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-success-bg border-[1.5px] border-success text-success text-[11px] font-bold rounded-lg">
-                            <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                            Connected
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="flex justify-center">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-background-mist border-[1.5px] border-border-mist text-text-slate text-[11px] font-medium rounded-lg">
-                            Ready
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 3. A two-line description of what the integration does */}
-                    <p className="text-text-slate text-[13px] font-medium leading-relaxed line-clamp-2 h-10 mb-4 overflow-hidden shrink-0">
-                      {platform.description}
-                    </p>
-
-                    {/* Platform connection details if connected */}
-                    {isConnected && (
-                      <div className="w-full mb-4 bg-background-mist border-[1.5px] border-border-mist rounded-xl p-3 text-[11px] font-semibold text-text-slate space-y-1 text-left shrink-0">
-                        {isGmail && gmailStatus ? (
-                          <>
-                            <div className="flex justify-between">
-                              <span>Account:</span>
-                              <span className="font-bold text-secondary truncate max-w-[130px]">{gmailStatus.email}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Linked On:</span>
-                              <span className="font-bold text-secondary">{formatConnectedDate(gmailStatus.connectedAt)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Last Sync:</span>
-                              <span className="font-bold text-secondary">{formatLastSyncTime(gmailStatus.lastSyncAt) || "Never"}</span>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="flex justify-between">
-                              <span>Sync Mode:</span>
-                              <span className="font-bold text-secondary">Sandbox Simulation</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Status:</span>
-                              <span className="font-bold text-success">Active</span>
-                            </div>
-                          </>
-                        )}
+                  {/* 2. Platform name, below the logo */}
+                  <div className="space-y-1.5 mb-2.5 shrink-0">
+                    <h3 className="font-display font-black text-xl text-secondary">
+                      {platform.name}
+                    </h3>
+                    {isConnected ? (
+                      <div className="flex justify-center">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-success-bg border-[1.5px] border-success text-success text-[11px] font-bold rounded-lg">
+                          <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                          Connected
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex justify-center">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-background-mist border-[1.5px] border-border-mist text-text-slate text-[11px] font-medium rounded-lg">
+                          Ready
+                        </span>
                       </div>
                     )}
+                  </div>
 
-                    {/* ⚠️ Flag missing asset warnings to meet prompt requirements */}
-                    {platform.id === "outlook" && (
-                      <div className="text-[10px] text-warning font-bold mb-3.5 bg-warning-bg border border-warning/20 px-2.5 py-1 rounded-md shrink-0">
-                        ⚠️ missing outlook.png (using email.png)
-                      </div>
-                    )}
-                    {platform.id === "linkedin" && (
-                      <div className="text-[10px] text-warning font-bold mb-3.5 bg-warning-bg border border-warning/20 px-2.5 py-1 rounded-md shrink-0">
-                        ⚠️ missing linkedin.png (using inline SVG)
-                      </div>
-                    )}
+                  {/* 3. A two-line description of what the integration does */}
+                  <p className="text-text-slate text-[13px] font-medium leading-relaxed line-clamp-2 h-10 mb-4 overflow-hidden shrink-0">
+                    {platform.description}
+                  </p>
 
-                    {/* 4. A Connect / Disconnect button (and Settings button if connected) */}
-                    <div className="w-full flex items-center gap-2 mt-auto shrink-0">
-                      {isConnected ? (
+                  {/* Platform connection details if connected */}
+                  {isConnected && (
+                    <div className="w-full mb-4 bg-background-mist border-[1.5px] border-border-mist rounded-xl p-3 text-[11px] font-semibold text-text-slate space-y-1 text-left shrink-0">
+                      {isGmail && gmailStatus ? (
                         <>
-                          <button
-                            onClick={() => {
-                              if (isGmail) {
-                                handleGmailDisconnect();
-                              } else {
-                                handleDisconnectMockPlatform(platform.id);
-                              }
-                            }}
-                            className="flex-1 min-h-[42px] px-4 py-2 bg-error-bg border-[2px] border-error text-error font-bold text-[14px] rounded-xl hover:bg-error hover:text-white transition-all duration-200 cursor-pointer text-center"
-                          >
-                            Disconnect
-                          </button>
-                          
-                          <button
-                            onClick={() => handleSettingsClick(platform)}
-                            title={`${platform.name} Settings`}
-                            className="min-h-[42px] px-3.5 bg-surface-white border-[2px] border-secondary text-secondary font-bold text-[14px] rounded-xl hover:bg-background-mist transition-all duration-200 cursor-pointer flex items-center justify-center shrink-0"
-                          >
-                            <Settings className="w-[18px] h-[18px]" />
-                          </button>
+                          <div className="flex justify-between">
+                            <span>Account:</span>
+                            <span className="font-bold text-secondary truncate max-w-[130px]">{gmailStatus.email}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Linked On:</span>
+                            <span className="font-bold text-secondary">{formatConnectedDate(gmailStatus.connectedAt)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Last Sync:</span>
+                            <span className="font-bold text-secondary">{formatLastSyncTime(gmailStatus.lastSyncAt) || "Never"}</span>
+                          </div>
+                        </>
+                      ) : isWhatsApp && whatsappStatus ? (
+                        <>
+                          <div className="flex justify-between">
+                            <span>Account:</span>
+                            <span className="font-bold text-secondary truncate max-w-[130px]">{whatsappStatus.email}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Linked On:</span>
+                            <span className="font-bold text-secondary">{formatConnectedDate(whatsappStatus.connectedAt)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Last Sync:</span>
+                            <span className="font-bold text-secondary">{formatLastSyncTime(whatsappStatus.lastSyncAt) || "Never"}</span>
+                          </div>
                         </>
                       ) : (
+                        <>
+                          <div className="flex justify-between">
+                            <span>Sync Mode:</span>
+                            <span className="font-bold text-secondary">Sandbox Simulation</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Status:</span>
+                            <span className="font-bold text-success">Active</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* âš ï¸ Flag missing asset warnings to meet prompt requirements */}
+                  {platform.id === "outlook" && (
+                    <div className="text-[10px] text-warning font-bold mb-3.5 bg-warning-bg border border-warning/20 px-2.5 py-1 rounded-md shrink-0">
+                      âš ï¸ missing outlook.png (using email.png)
+                    </div>
+                  )}
+                  {platform.id === "linkedin" && (
+                    <div className="text-[10px] text-warning font-bold mb-3.5 bg-warning-bg border border-warning/20 px-2.5 py-1 rounded-md shrink-0">
+                      âš ï¸ missing linkedin.png (using inline SVG)
+                    </div>
+                  )}
+
+                  {/* 4. A Connect / Disconnect button (and Settings button if connected) */}
+                  <div className="w-full flex items-center gap-2 mt-auto shrink-0">
+                    {isConnected ? (
+                      <>
                         <button
                           onClick={() => {
                             if (isGmail) {
-                              handleGmailConnect();
+                              handleGmailDisconnect();
+                            } else if (isWhatsApp) {
+                              handleWhatsAppDisconnect();
                             } else {
-                              handleConnectMockPlatform(platform.id);
+                              handleDisconnectMockPlatform(platform.id);
                             }
                           }}
-                          className="w-full min-h-[42px] px-4 py-2 bg-primary text-white border-[2px] border-primary font-bold text-[14px] rounded-xl hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-flat-sm active:translate-x-0 active:translate-y-0 active:shadow-none transition-all duration-200 cursor-pointer text-center"
+                          className="flex-1 min-h-[42px] px-4 py-2 bg-error-bg border-[2px] border-error text-error font-bold text-[14px] rounded-xl hover:bg-error hover:text-white transition-all duration-200 cursor-pointer text-center"
                         >
-                          Connect
+                          Disconnect
                         </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-        </div>
-
-        {/* Right Column: Gmail Live Stream (Functional using REST endpoints) */}
-        <div className="space-y-8">
-          <Card className="neo-border neo-shadow-md bg-surface-white relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full blur-2xl pointer-events-none" />
-            
-            <div className="border-b-[2.5px] border-border-mist pb-5 mb-5 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Mail className="w-5 h-5 text-primary" />
-                <h2 className="font-display font-black text-xl text-secondary">
-                  Gmail Live Stream
-                </h2>
-              </div>
-              <button 
-                onClick={loadGmailInbox}
-                disabled={!gmailStatus || isInboxRefreshing}
-                className="p-1 hover:bg-black/5 rounded text-text-slate disabled:opacity-40 disabled:pointer-events-none"
-              >
-                <RefreshCw className={`w-4 h-4 ${isInboxRefreshing ? "animate-spin" : ""}`} />
-              </button>
-            </div>
-
-            {gmailStatus ? (
-              <div className="space-y-4">
-                {/* Search Inbox Controls */}
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Search className="w-4 h-4 text-text-fog absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={gmailQuery}
-                      onChange={(e) => setGmailQuery(e.target.value)}
-                      placeholder="Search mail: is:unread..."
-                      className="w-full h-11 pl-10 pr-4 bg-background-mist border-[2px] border-secondary dark:border-white font-mono text-[13px] rounded-xl outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 transition-all"
-                    />
-                  </div>
-                  <button
-                    onClick={() => setShowComposeModal(true)}
-                    title="Compose Email"
-                    className="h-11 px-3.5 bg-secondary text-white border-[2px] border-secondary rounded-xl hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-flat-sm active:translate-x-0 active:translate-y-0 active:shadow-none transition-all cursor-pointer flex items-center justify-center"
-                  >
-                    <Plus className="w-5 h-5" />
-                  </button>
-                </div>
-
-                {/* Filter tags */}
-                <div className="flex flex-wrap gap-1.5 items-center">
-                  <button
-                    onClick={() => setGmailQuery("is:unread")}
-                    className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border-[1.5px] transition-all cursor-pointer ${
-                      gmailQuery === "is:unread"
-                        ? "bg-secondary text-white border-secondary"
-                        : "bg-background-mist border-border-mist text-text-slate hover:border-text-fog"
-                    }`}
-                  >
-                    Unread
-                  </button>
-                  <button
-                    onClick={() => setGmailQuery("from:google")}
-                    className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border-[1.5px] transition-all cursor-pointer ${
-                      gmailQuery === "from:google"
-                        ? "bg-secondary text-white border-secondary"
-                        : "bg-background-mist border-border-mist text-text-slate hover:border-text-fog"
-                    }`}
-                  >
-                    Google Alerts
-                  </button>
-                  <button
-                    onClick={() => setGmailQuery("")}
-                    className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border-[1.5px] transition-all cursor-pointer ${
-                      gmailQuery === ""
-                        ? "bg-secondary text-white border-secondary"
-                        : "bg-background-mist border-border-mist text-text-slate hover:border-text-fog"
-                    }`}
-                  >
-                    All Inbox
-                  </button>
-                </div>
-
-                {/* Inbox Emails List */}
-                {isInboxRefreshing ? (
-                  <div className="py-16 text-center space-y-3">
-                    <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
-                    <p className="text-[13px] text-text-slate font-bold">Fetching live emails from Google API...</p>
-                  </div>
-                ) : gmailInboxData && gmailInboxData.length > 0 ? (
-                  <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
-                    {gmailInboxData.map((email: GmailInboxEmail) => (
-                      <div
-                        key={email.id}
-                        onClick={() => handleFetchEmailDetail(email.id)}
-                        className={`p-3.5 rounded-xl border-[2px] text-left transition-all hover:bg-background-mist cursor-pointer ${
-                          selectedInboxEmail === email.id
-                            ? "border-primary bg-primary/5"
-                            : "border-border-mist bg-surface-white"
-                        }`}
+                        
+                        <button
+                          onClick={() => handleSettingsClick(platform)}
+                          title={`${platform.name} Settings`}
+                          className="min-h-[42px] px-3.5 bg-surface-white border-[2px] border-secondary text-secondary font-bold text-[14px] rounded-xl hover:bg-background-mist transition-all duration-200 cursor-pointer flex items-center justify-center shrink-0"
+                        >
+                          <Settings className="w-[18px] h-[18px]" />
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          if (isGmail) {
+                            handleGmailConnect();
+                          } else if (isWhatsApp) {
+                            handleWhatsAppConnectClick();
+                          } else {
+                            handleConnectMockPlatform(platform.id);
+                          }
+                        }}
+                        className="w-full min-h-[42px] px-4 py-2 bg-primary text-white border-[2px] border-primary font-bold text-[14px] rounded-xl hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-flat-sm active:translate-x-0 active:translate-y-0 active:shadow-none transition-all duration-200 cursor-pointer text-center"
                       >
-                        <div className="flex justify-between items-start gap-2 mb-1.5">
-                          <span className="font-bold text-secondary text-[12px] truncate max-w-[140px]">
-                            {(email.from || "Unknown").split(" <")[0]}
-                          </span>
-                          <span className="text-[10px] text-text-fog font-medium whitespace-nowrap">
-                            {email.date}
-                          </span>
-                        </div>
-                        
-                        <h4 className="font-bold text-secondary text-[13px] line-clamp-1 mb-1">
-                          {email.subject}
-                        </h4>
-                        
-                        <p className="text-[11px] text-text-slate line-clamp-2 leading-relaxed">
-                          {email.snippet}
-                        </p>
-
-                        {email.unread && (
-                          <div className="mt-2 flex">
-                            <span className="w-2 h-2 rounded-full bg-primary" />
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                        Connect
+                      </button>
+                    )}
                   </div>
-                ) : (
-                  <div className="p-8 border-[2px] border-dashed border-border-mist rounded-xl text-center">
-                    <Info className="w-8 h-8 text-text-fog mx-auto mb-2" />
-                    <p className="text-[13px] text-text-slate font-medium">
-                      No emails found.
-                    </p>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="p-8 border-[2.5px] border-dashed border-border-mist rounded-[18px] text-center space-y-4 bg-background-mist/30">
-                <Lock className="w-9 h-9 text-text-fog mx-auto" />
-                <div>
-                  <h3 className="font-bold text-secondary text-[15px]">Gmail Offline</h3>
-                  <p className="text-text-slate text-[12px] max-w-[200px] mx-auto mt-1 leading-relaxed">
-                    Connect your real Google account using OAuth to fetch live emails and run MCP tools.
-                  </p>
                 </div>
-                <Button
-                  onClick={handleGmailConnect}
-                  variant="secondary"
-                  size="sm"
-                  className="w-full text-[13px] min-h-[38px] py-2 border-[2px] border-secondary"
-                >
-                  Connect Gmail
-                </Button>
-              </div>
-            )}
-          </Card>
-        </div>
+              );
+            })}
+          </div>
+        </Card>
       </div>
 
-      {/* ── Modal: Gmail Email Content Viewer ── */}
-      {selectedInboxEmail && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-surface-white neo-border rounded-[28px] max-w-lg w-full overflow-hidden neo-shadow-lg animate-in fade-in zoom-in duration-200">
+
+      {/* â”€â”€ Modal: WhatsApp Connection (Pairing Code Flow) â”€â”€ */}
+      {showWhatsAppConnectModal && (
+        <div 
+          role="dialog" 
+          aria-modal="true" 
+          className="fixed inset-0 bg-slate-950/40 dark:bg-black/60 backdrop-blur-[4px] z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
+        >
+          <div 
+            className="bg-white dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl shadow-slate-950/10 dark:shadow-black/50 animate-in fade-in zoom-in duration-200"
+          >
             {/* Header */}
-            <div className="p-6 border-b-[2.5px] border-border-mist bg-background-mist flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Mail className="w-5 h-5 text-primary" />
-                <span className="font-display font-black text-[18px] text-secondary">
-                  Gmail Message Detail
+            <div className="px-6 py-4.5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/[0.3] dark:bg-slate-900/[0.15] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-[#25D366]/10 dark:bg-[#25D366]/20 text-[#128C7E] dark:text-[#25D366] rounded-xl flex items-center justify-center shrink-0">
+                  <Smartphone className="w-5 h-5" />
+                </div>
+                <span className="font-sans font-semibold text-[17px] text-slate-900 dark:text-slate-100 tracking-tight">
+                  Link WhatsApp Channel
                 </span>
               </div>
               <button
                 onClick={() => {
-                  setSelectedInboxEmail(null);
-                  setEmailDetails(null);
+                  stopWhatsAppPolling();
+                  setShowWhatsAppConnectModal(false);
                 }}
-                className="p-1.5 hover:bg-black/5 rounded-lg text-text-slate transition-all"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-slate-400/20"
+                aria-label="Close modal"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Email details loader / body */}
-            <div className="p-6 space-y-4">
-              {emailDetailLoading ? (
-                <div className="py-12 text-center space-y-3">
-                  <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
-                  <p className="text-[13px] text-text-slate font-bold">
-                    Running `gmail_get_email` MCP tool...
-                  </p>
-                </div>
-              ) : emailDetails ? (
-                <div className="space-y-4 text-left">
-                  <div className="space-y-2 border-b-[2px] border-border-mist pb-4">
-                    <div className="flex justify-between text-[12px] font-medium text-text-slate">
-                      <span>Sender:</span>
-                      <span className="font-bold text-secondary">{emailDetails.from}</span>
-                    </div>
-                    <div className="flex justify-between text-[12px] font-medium text-text-slate">
-                      <span>Recipient:</span>
-                      <span className="font-bold text-secondary">{emailDetails.to}</span>
-                    </div>
-                    <div className="flex justify-between text-[12px] font-medium text-text-slate">
-                      <span>Date:</span>
-                      <span className="font-bold text-secondary">{emailDetails.date}</span>
-                    </div>
-                    <div className="flex justify-between text-[12px] font-medium text-text-slate pt-1">
-                      <span>Subject:</span>
-                      <span className="font-bold text-secondary text-[14px]">{emailDetails.subject}</span>
-                    </div>
-                  </div>
-
-                  <div className="bg-background-mist border-[2px] border-border-mist rounded-xl p-4 max-h-[260px] overflow-y-auto">
-                    <p className="font-mono text-[13px] text-secondary leading-relaxed whitespace-pre-wrap">
-                      {emailDetails.body}
+            {/* Modal Body */}
+            <div className="p-6 space-y-6 text-left">
+              {/* Step 1: Input Phone Number */}
+              {!whatsappPairingCode ? (
+                <form onSubmit={handleGenerateWhatsAppPairingCode} className="space-y-6">
+                  <div className="space-y-2.5 text-slate-600 dark:text-slate-400">
+                    <p className="text-[13.5px] font-medium text-slate-750 dark:text-slate-300">
+                      Enter the WhatsApp number you want to connect. We&apos;ll send a pairing code to link it.
                     </p>
+                    <ul className="space-y-1.5 text-[12.5px] font-medium text-slate-500 dark:text-slate-400 pl-1 ml-1 list-disc marker:text-[#25D366]">
+                      <li className="pl-1">Include your country code.</li>
+                      <li className="pl-1">
+                        Example: <span className="font-semibold text-slate-755 dark:text-slate-300 font-mono">+1 234 567 8900</span>
+                      </li>
+                      <li className="pl-1">The pairing code is generated securely and expires after a few minutes.</li>
+                    </ul>
                   </div>
                   
-                  <div className="flex justify-between items-center text-[11px] text-text-slate font-mono">
-                    <span>Protocol: Google Gmail API (Direct Link)</span>
-                    <span className="text-success font-bold">Status: OK</span>
+                  <div className="relative w-full">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <label htmlFor="whatsapp-phone-input" className="block text-[12.5px] font-semibold text-slate-700 dark:text-slate-400">
+                        Phone number
+                      </label>
+                      {whatsappPhoneNumber && (
+                        <span className="text-[11px] font-medium text-slate-450 dark:text-slate-505 transition-all animate-in fade-in duration-200">
+                          {selectedCountry.name}
+                        </span>
+                      )}
+                    </div>
+                    
+                    <div ref={phoneInputRef} className={`
+                      relative flex items-center w-full h-11 rounded-xl bg-slate-50 dark:bg-black/10 border transition-all duration-200
+                      ${isGeneratingPairingCode ? "opacity-60 cursor-not-allowed" : ""}
+                      ${showCountryDropdown 
+                        ? "border-[#25D366] ring-2 ring-[#25D366]/10" 
+                        : "border-slate-200 dark:border-slate-800 hover:border-slate-350 dark:hover:border-slate-750"
+                      }
+                    `}>
+                      {/* Country Selector Button */}
+                      <button
+                        ref={countryTriggerRef}
+                        type="button"
+                        disabled={isGeneratingPairingCode}
+                        onClick={() => setShowCountryDropdown(!showCountryDropdown)}
+                        aria-haspopup="listbox"
+                        aria-expanded={showCountryDropdown}
+                        aria-label="Select country code"
+                        className="flex items-center justify-between min-w-[110px] h-full pl-3.5 pr-3 hover:bg-slate-100 dark:hover:bg-slate-800/40 rounded-l-xl transition-colors cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-300"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl leading-none">{flagEmoji(selectedCountry.iso)}</span>
+                          <span className="text-[14px] font-bold font-mono text-slate-800 dark:text-slate-200">{selectedCountry.code}</span>
+                        </div>
+                        <ChevronDown className={`w-4 h-4 ml-1 text-slate-400 transition-transform duration-200 ${showCountryDropdown ? "rotate-180" : ""}`} />
+                      </button>
+
+                      {/* Visual Separator */}
+                      <div className="w-[1.5px] h-5 bg-slate-200 dark:bg-slate-800 shrink-0" />
+
+                      {/* Text Input */}
+                      <input
+                        id="whatsapp-phone-input"
+                        type="tel"
+                        required
+                        disabled={isGeneratingPairingCode}
+                        value={whatsappPhoneNumber}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/[^\d\s\-\(\)\+]/g, "");
+                          setWhatsAppPhoneNumber(val);
+                        }}
+                        placeholder={selectedCountry.code === "+1" ? "(201) 555-0123" : selectedCountry.code === "+91" ? "98765 43210" : "Enter phone number"}
+                        className="flex-1 h-full px-3.5 bg-transparent border-0 outline-none focus:outline-none focus:ring-0 text-[14px] font-semibold text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
+                      />
+
+                      {/* Loading State inline */}
+                      {isGeneratingPairingCode && (
+                        <div className="pr-3.5 flex items-center">
+                          <Loader2 className="w-4 h-4 animate-spin text-[#25D366]" />
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+
+                  <div className="pt-2 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowWhatsAppConnectModal(false)}
+                      className="flex-1 inline-flex items-center justify-center font-medium text-[13.5px] rounded-xl h-10 min-h-[40px] bg-transparent hover:bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-slate-400/20 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isGeneratingPairingCode}
+                      className="flex-1 inline-flex items-center justify-center font-medium text-[13.5px] rounded-xl h-10 min-h-[40px] bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-slate-200 text-white dark:text-slate-950 transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-slate-400/20 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+                    >
+                      {isGeneratingPairingCode ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : null}
+                      Generate Code
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                /* Step 2: Show Pairing Code & Wait */
+                <div className="space-y-6">
+                  <div className="text-center space-y-3.5">
+                    <p className="text-[13.5px] text-slate-600 dark:text-slate-400 font-medium">
+                      Enter this pairing code on your mobile device to authorize:
+                    </p>
+                    
+                    {/* High-Fidelity Code Badge */}
+                    <div className="inline-flex items-center justify-center px-10 py-4.5 bg-[#25D366]/[0.06] dark:bg-[#25D366]/10 border border-[#25D366]/30 dark:border-[#25D366]/40 rounded-2xl shadow-sm shadow-[#25D366]/5">
+                      <span className="font-mono font-bold text-3xl tracking-[0.2em] text-[#128C7E] dark:text-[#25D366] select-all leading-none">
+                        {whatsappPairingCode}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Device linking instructions */}
+                  <div className="bg-slate-50 dark:bg-slate-900/40 p-5 rounded-2xl border border-slate-100 dark:border-slate-800/80 space-y-3">
+                    <h4 className="font-semibold text-[13px] text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <Link className="w-3.5 h-3.5 text-[#25D366]" /> Instructions:
+                    </h4>
+                    <ol className="text-[12.5px] font-medium text-slate-600 dark:text-slate-400 space-y-2 list-decimal pl-4 leading-relaxed">
+                      <li>Open <strong className="text-slate-900 dark:text-slate-200 font-semibold">WhatsApp</strong> on your phone.</li>
+                      <li>Go to <strong className="text-slate-900 dark:text-slate-200 font-semibold">Settings</strong> / <strong className="text-slate-900 dark:text-slate-200 font-semibold">Menu</strong> &gt; <strong className="text-slate-900 dark:text-slate-200 font-semibold">Linked Devices</strong>.</li>
+                      <li>Select <strong className="text-slate-900 dark:text-slate-200 font-semibold">Link a Device</strong>.</li>
+                      <li>Choose <strong className="text-slate-900 dark:text-slate-200 font-semibold">Link with phone number instead</strong>.</li>
+                      <li>Type the 8-character code shown above.</li>
+                    </ol>
+                  </div>
+
+                  {/* Pulsing connection listener */}
+                  <div className="flex items-center justify-center gap-2 py-1 text-[#25D366] font-semibold text-[13px]">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="animate-pulse">Waiting for WhatsApp authorization...</span>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      onClick={() => {
+                        stopWhatsAppPolling();
+                        setShowWhatsAppConnectModal(false);
+                      }}
+                      className="w-full inline-flex items-center justify-center font-medium text-[13.5px] rounded-xl h-10 min-h-[40px] bg-transparent hover:bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-slate-400/20 cursor-pointer"
+                    >
+                      Cancel & Close
+                    </button>
                   </div>
                 </div>
-              ) : (
-                <div className="py-6 text-center text-error space-y-2">
-                  <AlertCircle className="w-8 h-8 mx-auto" />
-                  <p className="font-bold">Failed to load email details from Gmail API.</p>
-                </div>
               )}
-
-              <div className="pt-2 flex justify-end">
-                <Button
-                  onClick={() => {
-                    setSelectedInboxEmail(null);
-                    setEmailDetails(null);
-                  }}
-                  variant="primary"
-                  className="min-h-[40px] px-6 text-[14px]"
-                >
-                  Close Message
-                </Button>
-              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Modal: Compose Email ── */}
-      {showComposeModal && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-surface-white neo-border rounded-[28px] max-w-lg w-full overflow-hidden neo-shadow-lg animate-in fade-in zoom-in duration-200">
-            {/* Header */}
-            <div className="p-6 border-b-[2.5px] border-border-mist bg-background-mist flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Mail className="w-5 h-5 text-primary" />
-                <span className="font-display font-black text-[18px] text-secondary">
-                  New Message (Gmail MCP)
-                </span>
-              </div>
-              <button
-                onClick={() => setShowComposeModal(false)}
-                className="p-1.5 hover:bg-black/5 rounded-lg text-text-slate transition-all"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* Compose Form */}
-            <div className="p-6 space-y-4 text-left">
-              <div className="space-y-1">
-                <label className="block text-[12px] font-black text-secondary uppercase tracking-wider">
-                  Recipient Email
-                </label>
-                <input
-                  type="email"
-                  value={composeTo}
-                  onChange={(e) => setComposeTo(e.target.value)}
-                  placeholder="colleague@example.com"
-                  className="w-full h-11 px-4 bg-background-mist border-[2px] border-secondary dark:border-white rounded-xl outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 text-[13px] font-bold"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-[12px] font-black text-secondary uppercase tracking-wider">
-                  Subject Line
-                </label>
-                <input
-                  type="text"
-                  value={composeSubject}
-                  onChange={(e) => setComposeSubject(e.target.value)}
-                  placeholder="Updates on Syncra project integrations"
-                  className="w-full h-11 px-4 bg-background-mist border-[2px] border-secondary dark:border-white rounded-xl outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 text-[13px] font-bold"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-[12px] font-black text-secondary uppercase tracking-wider">
-                  Message Body
-                </label>
-                <textarea
-                  value={composeBody}
-                  onChange={(e) => setComposeBody(e.target.value)}
-                  placeholder="Write message content..."
-                  rows={6}
-                  className="w-full p-4 bg-background-mist border-[2px] border-secondary dark:border-white rounded-xl outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 text-[13px] font-medium resize-none"
-                />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <Button
-                  onClick={() => setShowComposeModal(false)}
-                  variant="secondary"
-                  className="flex-1 min-h-[44px] py-2 border-[2px] border-secondary"
-                >
-                  Cancel Draft
-                </Button>
-                <Button
-                  onClick={handleSendCompose}
-                  isLoading={isSendingEmail}
-                  className="flex-1 min-h-[44px] py-2 bg-primary text-white"
-                >
-                  Send Email (MCP)
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Modal: Developer Config Setup Guide ── */}
+      {/* â”€â”€ Modal: Developer Config Setup Guide â”€â”€ */}
       {showConfigAlertModal && (
         <div role="dialog" aria-modal="true" className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-surface-white neo-border rounded-[28px] max-w-lg w-full overflow-hidden neo-shadow-lg animate-in fade-in zoom-in duration-200">
@@ -1099,7 +1212,7 @@ export default function IntegrationsPage() {
                   <li>Create an <strong>OAuth 2.0 Client ID</strong> (Web Application).</li>
                   <li>Set the Authorized Redirect URI to:
                     <div className="mt-1 p-2 bg-secondary text-white font-mono text-[11px] rounded overflow-x-auto select-all">
-                      {`${typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/api/auth/callback/google`}
+                      {`${typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/api/gmail-callback`}
                     </div>
                   </li>
                   <li className="mt-1">
@@ -1133,7 +1246,7 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"`}
         </div>
       )}
 
-      {/* ── Modal: Redesigned Settings dialog ── */}
+      {/* â”€â”€ Modal: Redesigned Settings dialog â”€â”€ */}
       {showSettingsModal && settingsPlatform && (
         <div role="dialog" aria-modal="true" className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-surface-white neo-border rounded-[28px] max-w-md w-full overflow-hidden neo-shadow-lg flex flex-col max-h-[85vh] animate-in fade-in zoom-in duration-200 text-left">
@@ -1237,6 +1350,20 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"`}
 
           </div>
         </div>
+      )}
+
+      {/* Country Dropdown Portal - rendered at body level to escape modal clipping */}
+      {showCountryDropdown && createPortal(
+        <CountryDropdownPortal
+          selectedCountry={selectedCountry}
+          countrySearch={countrySearch}
+          setCountrySearch={setCountrySearch}
+          setSelectedCountry={setSelectedCountry}
+          setShowCountryDropdown={setShowCountryDropdown}
+          triggerRef={phoneInputRef}
+          whatsappPhoneInputId="whatsapp-phone-input"
+        />,
+        document.body
       )}
 
     </div>

@@ -1,3 +1,5 @@
+"use client";
+
 import React from "react";
 import { Card } from "@/components/ui/card";
 import { Sparkles, ShieldCheck, Search, Bell, Clock, Brain, BarChart3, Inbox, Layers } from "lucide-react";

@@ -28,8 +28,7 @@ class StubProvider implements IntegrationProvider {
     return PLATFORM_MCP_TOOLS[this.id] || [];
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async executeTool(_accessToken: string, toolName: string, _args: Record<string, any>): Promise<any> {
+  async executeTool(_accessToken: string, toolName: string, _args: Record<string, unknown>): Promise<unknown> {
     return { success: true, message: `Executed tool ${toolName} for ${this.name} in sandbox mode.` };
   }
 }

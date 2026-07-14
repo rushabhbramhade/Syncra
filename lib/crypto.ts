@@ -2,11 +2,13 @@ import * as crypto from "crypto";
 
 const ALGORITHM = "aes-256-cbc";
 
-// Generate a 32-byte encryption key by hashing the INSFORGE_API_KEY secret
 function getEncryptionKey(): Buffer {
-  const secret = process.env.ENCRYPTION_KEY || process.env.INSFORGE_API_KEY;
+  const secret = process.env.TOKEN_ENCRYPTION_KEY;
   if (!secret) {
-    throw new Error("ENCRYPTION_KEY or INSFORGE_API_KEY must be set in environment variables for token encryption.");
+    throw new Error(
+      "TOKEN_ENCRYPTION_KEY must be set in environment variables for token encryption. " +
+      "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+    );
   }
   return crypto.createHash("sha256").update(secret).digest();
 }
@@ -40,8 +42,7 @@ export function decrypt(encryptedText: string): string {
     let decrypted = decipher.update(encrypted, "hex", "utf8");
     decrypted += decipher.final("utf8");
     return decrypted;
-  } catch (e) {
-    console.error("Token decryption failed:", e);
+  } catch {
     return "";
   }
 }

@@ -41,25 +41,16 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
 
-  // State — initialize from localStorage for instant hydration
-  const [user, setUser] = useState<InsforgeUser | null>(() => {
-    if (typeof window !== "undefined") {
-      try { return JSON.parse(localStorage.getItem("syncra-user-session") || "null"); } catch { return null; }
-    }
-    return null;
-  });
-  const [dbUser, setDbUser] = useState<DatabaseUser | null>(() => {
-    if (typeof window !== "undefined") {
-      try { return JSON.parse(localStorage.getItem("syncra-db-user-session") || "null"); } catch { return null; }
-    }
-    return null;
-  });
+  // State — start empty; server is the source of truth
+  const [user, setUser] = useState<InsforgeUser | null>(null);
+  const [dbUser, setDbUser] = useState<DatabaseUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
 
   // Guard against double fetch in StrictMode
   const hasFetched = useRef(false);
   const isMounted = useRef(true);
+  const isRefreshing = useRef(false);
 
   const clearSession = useCallback(() => {
     setUser(null);
@@ -72,6 +63,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshSession = useCallback(async () => {
     if (typeof window === "undefined") return;
+    if (isRefreshing.current) return;
+    isRefreshing.current = true;
 
     setIsLoading(true);
     setErrorMsg("");
@@ -108,7 +101,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Check if we got an unexpected error (like 5xx, or network issues) but NOT definitive 401
       if (error) {
         console.warn("Non-definitive auth check failure:", error);
-        setErrorMsg("Failed to connect to authentication server. Proceeding in offline mode.");
+        clearSession();
+        setErrorMsg("Unable to verify your session. Please sign in again.");
         setIsLoading(false);
         return;
       }
@@ -116,23 +110,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const verifiedUser = data?.user as InsforgeUser;
       if (verifiedUser) {
         setUser(verifiedUser);
-        localStorage.setItem("syncra-user-session", JSON.stringify(verifiedUser));
+        if (typeof window !== "undefined") {
+          localStorage.setItem("syncra-user-session", JSON.stringify(verifiedUser));
+        }
         
-        // Sync user to database in background
-        syncUserToDatabase({
-          auth_user_id: verifiedUser.id,
-          email: verifiedUser.email,
-          full_name: verifiedUser.profile?.name || "New User",
-          avatar_url: verifiedUser.profile?.avatar_url || null,
-          auth_provider: verifiedUser.providers?.[0] || "email",
-          email_verified: verifiedUser.emailVerified || false,
-        }).then((syncedUser) => {
-          if (!isMounted.current) return;
-          setDbUser(syncedUser);
-          localStorage.setItem("syncra-db-user-session", JSON.stringify(syncedUser));
-        }).catch((err) => {
-          console.error("Failed to sync user record in background:", err);
-        });
+        // Sync user to database — await so dbUser is available before loading finishes
+        try {
+          const syncedUser = await syncUserToDatabase({
+            auth_user_id: verifiedUser.id,
+            email: verifiedUser.email,
+            full_name: verifiedUser.profile?.name || "New User",
+            avatar_url: verifiedUser.profile?.avatar_url || null,
+            auth_provider: verifiedUser.providers?.[0] || "email",
+            email_verified: verifiedUser.emailVerified || false,
+          });
+          if (isMounted.current) {
+            setDbUser(syncedUser);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("syncra-db-user-session", JSON.stringify(syncedUser));
+            }
+          }
+        } catch (err) {
+          console.error("Failed to sync user record:", err);
+        }
       }
 
       setIsLoading(false);
@@ -141,17 +141,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!isMounted.current) return;
 
       const errorObj = err as { message?: string };
-      // Check if it's our hard timeout ceiling
       if (errorObj.message === "AUTH_TIMEOUT") {
         console.warn("Authentication request timed out after 5s ceiling.");
-        setErrorMsg("Authentication server took too long to respond. Proceeding with cached session.");
+        setErrorMsg("Authentication server took too long to respond. Please refresh.");
+        clearSession();
       } else {
         console.error("Session verification error:", err);
         setErrorMsg("Connection error while validating session.");
+        clearSession();
       }
       
-      // Do NOT redirect or clear session on timeout/network issue (prevent loops)
       setIsLoading(false);
+    } finally {
+      isRefreshing.current = false;
     }
   }, [clearSession]);
 

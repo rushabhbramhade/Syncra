@@ -17,23 +17,19 @@ const STORAGE_KEY = "syncra-theme";
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("light");
   const [mounted, setMounted] = useState(false);
-  const storageTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
-        if (stored === "dark" || stored === "light") {
-          setThemeState(stored);
-        } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-          setThemeState("dark");
-        }
-      } catch {
-        // Ignore
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
+      if (stored === "dark" || stored === "light") {
+        setThemeState(stored);
+      } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        setThemeState("dark");
       }
-      setMounted(true);
-    }, 0);
-    return () => clearTimeout(timer);
+    } catch {
+      // Ignore
+    }
+    setMounted(true);
   }, []);
 
   /* Apply `.dark` class to <html> whenever theme changes */
@@ -46,23 +42,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       root.classList.remove("dark");
     }
     
-    // Debounce localStorage writes to prevent conflicts
-    if (storageTimeoutRef.current) {
-      clearTimeout(storageTimeoutRef.current);
+    try {
+      localStorage.setItem(STORAGE_KEY, theme);
+    } catch {
+      // Ignore
     }
-    storageTimeoutRef.current = setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEY, theme);
-      } catch {
-        // Ignore
-      }
-    }, 100);
-
-    return () => {
-      if (storageTimeoutRef.current) {
-        clearTimeout(storageTimeoutRef.current);
-      }
-    };
   }, [theme, mounted]);
 
   const toggleTheme = useCallback(() => {

@@ -49,26 +49,25 @@ export class GoogleProvider implements IntegrationProvider {
     return PLATFORM_MCP_TOOLS[this.id] || [];
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async executeTool(accessToken: string, toolName: string, args: Record<string, any>): Promise<any> {
+  async executeTool(accessToken: string, toolName: string, args: Record<string, unknown>): Promise<unknown> {
     switch (toolName) {
       case "gmail_search_emails":
-        return await GmailService.searchEmails(accessToken, args.query, args.limit);
+        return await GmailService.searchEmails(accessToken, args.query as string, args.limit as number);
       case "gmail_get_email":
-        return await GmailService.getEmail(accessToken, args.messageId);
+        return await GmailService.getEmail(accessToken, args.messageId as string);
       case "gmail_send_email":
-        return await GmailService.sendEmail(accessToken, args.to, args.subject, args.body, args.threadId);
+        return await GmailService.sendEmail(accessToken, args.to as string, args.subject as string, args.body as string, args.threadId as string | undefined);
       case "gmail_list_labels":
         return await GmailService.getLabels(accessToken);
       case "gmail_archive_message":
-        return await GmailService.modifyLabels(accessToken, args.messageId, [], ["INBOX"]);
+        return await GmailService.modifyLabels(accessToken, args.messageId as string, [] as string[], ["INBOX"] as string[]);
       case "gmail_delete_message":
-        await GmailService.deleteMessage(accessToken, args.messageId);
+        await GmailService.deleteMessage(accessToken, args.messageId as string);
         return { success: true, message: `Message ${args.messageId} moved to trash.` };
       case "gmail_mark_read":
-        return await GmailService.modifyLabels(accessToken, args.messageId, [], ["UNREAD"]);
+        return await GmailService.modifyLabels(accessToken, args.messageId as string, [] as string[], ["UNREAD"] as string[]);
       case "gmail_mark_unread":
-        return await GmailService.modifyLabels(accessToken, args.messageId, ["UNREAD"], []);
+        return await GmailService.modifyLabels(accessToken, args.messageId as string, ["UNREAD"] as string[], [] as string[]);
       default:
         throw new Error(`Tool not supported: ${toolName}`);
     }

@@ -65,3 +65,6 @@ lib/google/gmail-connections.json
 /.next_custom/
 /test-*.js
 /verify-flows.js
+/app/api/auth/
+
+.trigger

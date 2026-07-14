@@ -1,18 +1,18 @@
+import React from "react";
 import {
-  LayoutDashboard,
-  Bot,
-  Newspaper,
-  Plug2,
-  Bell,
-  Settings,
-  CreditCard,
-  type LucideIcon,
-} from "lucide-react";
+  DashboardIcon,
+  AIAgentIcon,
+  BriefingIcon,
+  IntegrationsIcon,
+  AlertsIcon,
+  SettingsIcon,
+  PricingIcon,
+} from "./sidebar-icons";
 
 export interface NavItem {
   label: string;
   href: string;
-  icon: LucideIcon;
+  icon: React.ComponentType<{ className?: string }>;
   iconBg: string;
   badge?: number;
 }
@@ -21,38 +21,38 @@ export const PRIMARY_NAV: NavItem[] = [
   {
     label: "Dashboard",
     href: "/dashboard",
-    icon: LayoutDashboard,
+    icon: DashboardIcon,
     iconBg: "bg-indigo-600",
   },
   {
     label: "AI Agent",
     href: "/dashboard/ai-agent",
-    icon: Bot,
+    icon: AIAgentIcon,
     iconBg: "bg-purple-600",
   },
   {
     label: "Briefing",
     href: "/dashboard/briefing",
-    icon: Newspaper,
+    icon: BriefingIcon,
     iconBg: "bg-amber-600",
   },
   {
     label: "Integrations",
     href: "/dashboard/integrations",
-    icon: Plug2,
+    icon: IntegrationsIcon,
     iconBg: "bg-emerald-600",
   },
   {
     label: "Alerts",
     href: "/dashboard/alerts",
-    icon: Bell,
+    icon: AlertsIcon,
     iconBg: "bg-rose-600",
     badge: 3,
   },
   {
     label: "Settings",
     href: "/dashboard/settings",
-    icon: Settings,
+    icon: SettingsIcon,
     iconBg: "bg-slate-600",
   },
 ];
@@ -61,7 +61,7 @@ export const SECONDARY_NAV: NavItem[] = [
   {
     label: "Pricing Settings",
     href: "/dashboard/pricing",
-    icon: CreditCard,
+    icon: PricingIcon,
     iconBg: "bg-cyan-600",
   },
 ];

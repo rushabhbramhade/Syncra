@@ -13,6 +13,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Ignore deleted auth directory remnants:
+    "app/api/auth/**"
   ]),
 ]);
 

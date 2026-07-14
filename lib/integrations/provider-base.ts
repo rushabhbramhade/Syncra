@@ -26,8 +26,7 @@ export interface IntegrationProvider {
 
   // Tool execution
   getTools(): MCPTool[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  executeTool(accessToken: string, toolName: string, args: Record<string, any>): Promise<any>;
+  executeTool(accessToken: string, toolName: string, args: Record<string, unknown>): Promise<unknown>;
 }
 
 class ProviderRegistry {

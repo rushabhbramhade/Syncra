@@ -1,4 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/rules-of-hooks */
+
+// Tell ws to skip the native bufferutil addon (can be broken in some environments)
+process.env.WS_NO_BUFFER_UTIL = "1";
+
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -114,6 +118,7 @@ export class WhatsAppClientManager {
       auth: state,
       logger: pino({ level: "silent" }) as any,
       printQRInTerminal: false,
+      browser: ["Windows", "Chrome", "20.0.04"],
     });
 
     sock.ev.on("creds.update", saveCreds);
@@ -123,9 +128,10 @@ export class WhatsAppClientManager {
 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        const hasSession = WhatsAppClientManager.isSessionSaved(userId);
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut && hasSession;
         
-        console.log(`WhatsApp connection closed for ${userId}. Reconnecting: ${shouldReconnect}`);
+        console.log(`WhatsApp connection closed for ${userId}. Reconnecting: ${shouldReconnect}. Error:`, lastDisconnect?.error);
         
         activeSockets.delete(userId);
         if (shouldReconnect) {
@@ -198,7 +204,13 @@ export class WhatsAppClientManager {
    * Request pairing code for WhatsApp Web link
    */
   public static async requestPairingCode(userId: string, phoneNumber: string): Promise<string> {
-    // 1. Force close any existing connection to ensure clean state
+    // 1. Clean phone number
+    const cleanNumber = phoneNumber.replace(/\D/g, "");
+    if (!cleanNumber) {
+      throw new Error("Invalid phone number format.");
+    }
+
+    // 2. Force close any existing connection to ensure clean state
     if (activeSockets.has(userId)) {
       try {
         const oldSock = activeSockets.get(userId);
@@ -207,16 +219,34 @@ export class WhatsAppClientManager {
       activeSockets.delete(userId);
     }
 
-    // 2. Initialize a fresh connection
-    const sock = await this.getClient(userId, true);
-
-    // 3. Clean the phone number (digits only)
-    const cleanNumber = phoneNumber.replace(/\D/g, "");
-    if (!cleanNumber) {
-      throw new Error("Invalid phone number format.");
+    // 3. Clean up any stale session folder to start fresh for pairing
+    const sessionDir = getSessionPath(userId);
+    if (fs.existsSync(sessionDir)) {
+      try {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+      } catch (e) {
+        console.error("Failed to clean session folder before pairing:", e);
+      }
     }
 
-    // 4. Request the pairing code
+    // 4. Create a fresh auth state and a dedicated pairing socket
+    //    (NOT via getClient — we don't want reconnect logic or message caching)
+    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+
+    const sock = makeWASocket({
+      auth: state,
+      logger: pino({ level: "silent" }) as any,
+      printQRInTerminal: false,
+      syncFullHistory: false,
+      markOnlineOnConnect: false,
+    });
+
+    sock.ev.on("creds.update", saveCreds);
+
+    // 5. requestPairingCode must be called right after creating the socket,
+    //    BEFORE the QR code is generated. Baileys internally waits for the
+    //    WebSocket to connect, then sends the pairing request during handshake
+    //    instead of falling through to the QR path.
     try {
       const code = await sock.requestPairingCode(cleanNumber);
       return code;
@@ -231,7 +261,15 @@ export class WhatsAppClientManager {
    */
   public static isSessionSaved(userId: string): boolean {
     const credsPath = path.join(process.cwd(), ".insforge", "whatsapp-sessions", userId, "creds.json");
-    return fs.existsSync(credsPath);
+    if (!fs.existsSync(credsPath)) return false;
+    try {
+      const content = fs.readFileSync(credsPath, "utf-8");
+      const creds = JSON.parse(content);
+      const actualCreds = creds.creds || creds;
+      return !!(actualCreds && (actualCreds.me || actualCreds.registered));
+    } catch {
+      return false;
+    }
   }
 
   /**

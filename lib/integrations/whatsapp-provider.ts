@@ -27,8 +27,7 @@ export class WhatsAppProvider implements IntegrationProvider {
     return PLATFORM_MCP_TOOLS[this.id] || [];
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async executeTool(accessToken: string, toolName: string, args: Record<string, any>): Promise<any> {
+  async executeTool(accessToken: string, toolName: string, args: Record<string, unknown>): Promise<unknown> {
     const userId = accessToken.startsWith("whatsapp_token_")
       ? accessToken.replace("whatsapp_token_", "")
       : "";
@@ -43,23 +42,24 @@ export class WhatsAppProvider implements IntegrationProvider {
 
     switch (toolName) {
       case "whatsapp_fetch_messages": {
-        const limit = args.limit || 10;
+        const limit = (args.limit as number) || 10;
         const messages = WhatsAppClientManager.getMessages(userId);
         return messages.slice(0, limit);
       }
       case "whatsapp_read_chat": {
-        const limit = args.limit || 15;
-        const chatId = args.chatId;
+        const limit = (args.limit as number) || 15;
+        const chatId = args.chatId as string;
         const messages = WhatsAppClientManager.getMessages(userId, chatId);
         return messages.slice(0, limit);
       }
       case "whatsapp_send_message": {
-        const toJid = args.to.includes("@") ? args.to : `${args.to.replace(/\D/g, "")}@s.whatsapp.net`;
-        const result = await sock.sendMessage(toJid, { text: args.message });
+        const to = args.to as string;
+        const toJid = to.includes("@") ? to : `${to.replace(/\D/g, "")}@s.whatsapp.net`;
+        const result = await sock.sendMessage(toJid, { text: args.message as string });
         return { success: true, messageId: result?.key?.id || "unknown" };
       }
       case "whatsapp_search_chats": {
-        const query = args.query.toLowerCase();
+        const query = (args.query as string).toLowerCase();
         const messages = WhatsAppClientManager.getMessages(userId);
         const filtered = messages.filter(m => 
           m.message.toLowerCase().includes(query) || 
@@ -68,12 +68,11 @@ export class WhatsAppProvider implements IntegrationProvider {
         return filtered;
       }
       case "whatsapp_summarize_chat": {
-        const chatId = args.chatId;
+        const chatId = args.chatId as string;
         const messages = WhatsAppClientManager.getMessages(userId, chatId);
         if (messages.length === 0) {
           return { summary: "No message history available to summarize." };
         }
-        const textToSummarize = messages.map(m => `${m.fromName}: ${m.message}`).join("\n");
         return {
           summary: `Summary of chat with ${messages[0]?.fromName || "User"}: The conversation revolves around project updates, WhatsApp channel synchronization, and staging deployments. Key action items include reviewing files in the standup.`,
           messageCount: messages.length,
@@ -81,7 +80,7 @@ export class WhatsAppProvider implements IntegrationProvider {
         };
       }
       case "whatsapp_get_contact": {
-        const jid = args.jid;
+        const jid = args.jid as string;
         return {
           jid,
           name: jid.split("@")[0],
@@ -102,13 +101,14 @@ export class WhatsAppProvider implements IntegrationProvider {
         }
       }
       case "whatsapp_fetch_group_messages": {
-        const limit = args.limit || 10;
-        const groupId = args.groupId;
+        const limit = (args.limit as number) || 10;
+        const groupId = args.groupId as string | undefined;
         const messages = WhatsAppClientManager.getMessages(userId, groupId);
         return messages.slice(0, limit);
       }
       case "whatsapp_send_group_message": {
-        const grpJid = args.groupId.includes("@g.us") ? args.groupId : `${args.groupId}@g.us`;
+        const groupId = args.groupId as string;
+        const grpJid = groupId.includes("@g.us") ? groupId : `${groupId}@g.us`;
         const result = await sock.sendMessage(grpJid, { text: args.message });
         return { success: true, messageId: result?.key?.id || "unknown" };
       }

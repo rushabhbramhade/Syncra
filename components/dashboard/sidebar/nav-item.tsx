@@ -18,35 +18,36 @@ export function SidebarNavItem({ item, collapsed, isActive }: NavItemProps) {
       href={item.href}
       className={`
         group relative flex items-center gap-3 px-3 py-2.5 rounded-2xl
-        transition-all duration-300 cursor-pointer select-none
+        transition-all duration-200 cursor-pointer select-none
         ${
           isActive
-            ? "bg-secondary text-white shadow-md font-bold"
-            : "text-text-slate hover:bg-border-mist/60 hover:text-secondary font-semibold"
+            ? "bg-secondary dark:bg-slate-800 text-white dark:text-white shadow-md font-bold"
+            : "text-text-slate hover:bg-border-mist/60 hover:text-secondary dark:hover:text-white font-semibold"
         }
         ${collapsed ? "justify-center px-1" : ""}
       `}
     >
-      {/* Accent border/bar for active state */}
+      {/* Accent border/bar for active state - Floating Rounded Pill */}
       {isActive && (
-        <span className="absolute left-0 top-4 bottom-4 w-1.5 bg-primary rounded-r-full" />
+        <span className="absolute left-2.5 top-3.5 bottom-3.5 w-1 bg-primary rounded-full" />
       )}
 
-      {/* Icon container with solid bg - Large premium look */}
+      {/* Icon container with brand color bg - Large premium look */}
       <span
         className={`
           relative flex-shrink-0 flex items-center justify-center rounded-2xl
-          transition-all duration-300
-          ${item.iconBg} text-white
+          transition-all duration-200
+          ${
+            isActive
+              ? "bg-primary shadow-sm ring-2 ring-primary/20"
+              : "bg-background-mist dark:bg-slate-900/60 group-hover:bg-primary/10 dark:group-hover:bg-primary/20"
+          }
           w-12 h-12
           shadow-sm group-hover:scale-[1.06] group-hover:shadow-md group-active:scale-95
           ${isActive ? "ring-2 ring-white/30" : ""}
         `}
       >
-        <Icon
-          className="w-[24px] h-[24px]"
-          strokeWidth={2.2}
-        />
+        <Icon className="w-[24px] h-[24px]" />
 
         {/* Badge on icon */}
         {item.badge && item.badge > 0 && (
