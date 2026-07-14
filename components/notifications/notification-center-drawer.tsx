@@ -77,7 +77,7 @@ export function NotificationCenterDrawer({ isOpen, onClose }: DrawerProps) {
     try {
       const { getNotificationsAction } = await import("@/app/actions/notification-center");
       const result = await getNotificationsAction(user.id, { limit: 20, status: "unread" });
-      if (result.success) setNotifications(result.notifications);
+      if (result.success) setNotifications(result.notifications as NotificationItem[] || []);
     } catch {
     } finally {
       setLoading(false);

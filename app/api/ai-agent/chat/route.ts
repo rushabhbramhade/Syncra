@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     const repo = new AIChatRepository(db);
 
     // 3. Resolve or create conversation
-    let conversation;
+    let conversation: any;
     if (conversationId) {
       conversation = await repo.getConversationById(conversationId, userId);
       if (!conversation) {

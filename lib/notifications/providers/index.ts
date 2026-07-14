@@ -1,4 +1,4 @@
-export { NotificationProvider, FormattedNotification } from "../provider";
+export type { NotificationProvider, FormattedNotification } from "../provider";
 export { notificationProviderRegistry } from "../provider-registry";
 
 import "./telegram";

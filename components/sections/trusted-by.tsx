@@ -1,7 +1,8 @@
-"use client";
 
 import React from "react";
-import ScrollVelocity from "../ui/ScrollVelocity";
+import dynamic from "next/dynamic";
+
+const ScrollVelocity = dynamic(() => import("../ui/ScrollVelocity"));
 
 const logoItems = [
   { icon: "▲", name: "Vercel" },

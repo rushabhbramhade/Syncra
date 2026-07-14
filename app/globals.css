@@ -262,6 +262,16 @@ input::placeholder, textarea::placeholder {
   background: #475569;
 }
 
+/* ── Native smooth scrolling (0 JS, works with touchpad) ── */
+html {
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
 /* ── Theme transition helper ── */
 .theme-transition,
 .theme-transition *,

@@ -30,8 +30,8 @@ class NotificationEventHandler {
       title,
       body: JSON.stringify(templateData),
       provider: "telegram",
-      metadata: { ...event.data, eventType: event.type },
-      sourceEvent: event.type,
+      metadata: { ...event.data, eventType: type },
+      sourceEvent: type,
       template: type,
     });
     if (!result.success) {

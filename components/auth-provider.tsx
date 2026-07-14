@@ -41,16 +41,15 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
 
-  // State — start empty; server is the source of truth
   const [user, setUser] = useState<InsforgeUser | null>(null);
   const [dbUser, setDbUser] = useState<DatabaseUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Guard against double fetch in StrictMode
   const hasFetched = useRef(false);
   const isMounted = useRef(true);
   const isRefreshing = useRef(false);
+  const lastSyncRef = useRef<number>(0);
 
   const clearSession = useCallback(() => {
     setUser(null);
@@ -69,7 +68,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     setErrorMsg("");
 
-    // 5-second hard timeout to resolve loading state and prevent infinite loading loop
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("AUTH_TIMEOUT")), 5000)
     );
@@ -84,7 +82,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const { data, error } = result;
 
-      // Handle definitive unauthorized/unauthenticated response
       const isDefinitiveUnauthenticated =
         (!error && !data?.user) ||
         (error && (error.statusCode === 401 || error.statusCode === 403 || error.error === "UNAUTHORIZED" || error.error === "AUTH_SESSION_MISSING"));
@@ -98,7 +95,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Check if we got an unexpected error (like 5xx, or network issues) but NOT definitive 401
       if (error) {
         console.warn("Non-definitive auth check failure:", error);
         clearSession();
@@ -113,25 +109,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (typeof window !== "undefined") {
           localStorage.setItem("syncra-user-session", JSON.stringify(verifiedUser));
         }
-        
-        // Sync user to database — await so dbUser is available before loading finishes
-        try {
-          const syncedUser = await syncUserToDatabase({
-            auth_user_id: verifiedUser.id,
-            email: verifiedUser.email,
-            full_name: verifiedUser.profile?.name || "New User",
-            avatar_url: verifiedUser.profile?.avatar_url || null,
-            auth_provider: verifiedUser.providers?.[0] || "email",
-            email_verified: verifiedUser.emailVerified || false,
-          });
-          if (isMounted.current) {
-            setDbUser(syncedUser);
-            if (typeof window !== "undefined") {
-              localStorage.setItem("syncra-db-user-session", JSON.stringify(syncedUser));
+
+        if (Date.now() - lastSyncRef.current >= 60000) {
+          try {
+            const syncedUser = await syncUserToDatabase({
+              auth_user_id: verifiedUser.id,
+              email: verifiedUser.email,
+              full_name: verifiedUser.profile?.name || "New User",
+              avatar_url: verifiedUser.profile?.avatar_url || null,
+              auth_provider: verifiedUser.providers?.[0] || "email",
+              email_verified: verifiedUser.emailVerified || false,
+            });
+            if (isMounted.current) {
+              setDbUser(syncedUser);
+              lastSyncRef.current = Date.now();
+              if (typeof window !== "undefined") {
+                localStorage.setItem("syncra-db-user-session", JSON.stringify(syncedUser));
+              }
             }
+          } catch (err) {
+            console.error("Failed to sync user record:", err);
           }
-        } catch (err) {
-          console.error("Failed to sync user record:", err);
         }
       }
 
@@ -167,9 +165,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isMounted.current = false;
     };
   }, [refreshSession]);
-
-  // Auth is initializing — expose isLoading via context so each page can render its own skeleton
-  // We do NOT block children here to avoid redirect races and flash-of-redirect issues.
 
   return (
     <AuthContext.Provider value={{ user, dbUser, isLoading, errorMsg, refreshSession, clearSession }}>

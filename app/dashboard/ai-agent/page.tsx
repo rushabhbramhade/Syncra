@@ -15,31 +15,26 @@ import {
 } from "@/app/actions/ai-chat";
 import {
   Bot,
-  Send,
-  Paperclip,
-  Pin,
-  Star,
-  Trash2,
-  Archive,
-  MessageSquare,
-  Plus,
-  Check,
-  Loader2,
   Sparkles,
   ChevronDown,
-  X,
   Copy,
   FolderSync,
   Compass,
-  Database,
-  Search,
   User,
-  PanelLeftClose,
   PanelLeft,
-  Settings,
-  ShieldAlert,
   Menu,
+  Loader2,
+  X,
+  Plus,
+  Database,
 } from "lucide-react";
+import { SidebarChatItem } from "@/components/dashboard/ai-agent/sidebar-chat-item";
+import { ToolExecutionItem } from "@/components/dashboard/ai-agent/tool-execution-item";
+import { AgentSidebar } from "@/components/dashboard/ai-agent/agent-sidebar";
+import dynamic from "next/dynamic";
+import { ChatInput } from "@/components/dashboard/ai-agent/chat-input";
+
+const MemoryManagerPanel = dynamic(() => import("@/components/dashboard/ai-agent/memory-manager-panel").then(mod => mod.MemoryManagerPanel), { ssr: false });
 
 // List of available models
 const MODELS = [
@@ -205,9 +200,6 @@ export default function AIAgentPage() {
   // Memory manager
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [memories, setMemories] = useState<any[]>([]);
-  const [memoryKey, setMemoryKey] = useState("");
-  const [memoryVal, setMemoryVal] = useState("");
-  const [memoryCategory, setMemoryCategory] = useState("context");
 
   // Rename modal
   const [renameModalOpen, setRenameModalOpen] = useState(false);
@@ -523,15 +515,11 @@ export default function AIAgentPage() {
     }
   }, [userId]);
 
-  // Save new Memory manually
-  const saveMemory = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userId || !memoryKey.trim() || !memoryVal.trim()) return;
-
+  // Add new Memory
+  const handleAddMemory = async (key: string, value: string, category: string) => {
+    if (!userId) return;
     try {
-      await addMemoryAction(userId, memoryKey.trim(), memoryVal.trim(), memoryCategory);
-      setMemoryKey("");
-      setMemoryVal("");
+      await addMemoryAction(userId, key, value, category);
       loadMemories();
     } catch (e) {
       console.error("Memory saving failed:", e);
@@ -597,188 +585,35 @@ export default function AIAgentPage() {
 
   const groupedStandard = groupConversationsByDate(standardConversations);
 
+  const cancelGeneration = () => {
+    if (eventSourceRef.current) eventSourceRef.current.abort();
+    setLoadingChat(false);
+    setStreamingContent("");
+    setExecutingTool(null);
+  };
+
   return (
     <div className="flex h-[calc(100vh-64px)] overflow-hidden font-sans text-text-ink relative bg-background-mist theme-transition">
       
-      {/* ── SIDEBAR DESKTOP ── */}
-      <div 
-        className={`${
-          sidebarOpen ? "w-76" : "w-0"
-        } border-r-[2px] border-border-mist bg-surface-white flex flex-col transition-all duration-200 overflow-hidden hidden md:flex`}
-      >
-        {/* Sidebar Header */}
-        <div className="p-4 border-b-[2px] border-border-mist flex justify-between items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 bg-primary/10 rounded-xl border border-primary/20">
-              <Bot className="w-5 h-5 text-primary" />
-            </div>
-            <span className="font-display font-bold text-[15px]">Agent Chats</span>
-          </div>
-          <button 
-            onClick={() => setSidebarOpen(false)}
-            className="p-1.5 hover:bg-border-mist rounded-xl transition-colors cursor-pointer"
-            title="Collapse Sidebar"
-          >
-            <PanelLeftClose className="w-4 h-4 text-text-slate" />
-          </button>
-        </div>
-
-        {/* Action Header */}
-        <div className="p-3 border-b-[2px] border-border-mist flex flex-col gap-2.5">
-          <button
-            onClick={createNewChat}
-            className="w-full py-2.5 px-4 bg-gradient-to-br from-primary to-primary/80 hover:from-primary/95 hover:to-primary/85 text-white font-bold text-[13.5px] rounded-xl shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            New Chat
-          </button>
-
-          {/* Search Bar */}
-          <div className="relative flex items-center bg-background-mist rounded-xl border-[2px] border-border-mist focus-within:border-primary/50 px-3 py-2 transition-colors duration-200">
-            <Search className="w-4 h-4 text-text-fog mr-2" />
-            <input 
-              type="text" 
-              placeholder="Search chats..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-transparent border-none text-[12.5px] focus:outline-none placeholder-text-fog"
-            />
-          </div>
-        </div>
-
-        {/* Conversations Lists */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-4 scrollbar-hide">
-          {/* Pinned List */}
-          {pinnedConversations.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-text-fog tracking-wider uppercase pl-2 flex items-center gap-1">
-                <Pin className="w-3 h-3 rotate-45" /> Pinned
-              </span>
-              {pinnedConversations.map((convo) => (
-                <SidebarChatItem 
-                  key={convo.id} 
-                  convo={convo} 
-                  active={activeConversationId === convo.id}
-                  onSelect={selectConversation}
-                  onPin={togglePin}
-                  onFavorite={toggleFavorite}
-                  onArchive={archiveConvo}
-                  onDelete={deleteConvo}
-                  onRename={triggerRename}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Favorite List */}
-          {favoriteConversations.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-text-fog tracking-wider uppercase pl-2 flex items-center gap-1">
-                <Star className="w-3 h-3 fill-accent-orange text-accent-orange" /> Favorites
-              </span>
-              {favoriteConversations.map((convo) => (
-                <SidebarChatItem 
-                  key={convo.id} 
-                  convo={convo} 
-                  active={activeConversationId === convo.id}
-                  onSelect={selectConversation}
-                  onPin={togglePin}
-                  onFavorite={toggleFavorite}
-                  onArchive={archiveConvo}
-                  onDelete={deleteConvo}
-                  onRename={triggerRename}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Today Standard List */}
-          {groupedStandard.today.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-text-fog tracking-wider uppercase pl-2">Today</span>
-              {groupedStandard.today.map((convo) => (
-                <SidebarChatItem 
-                  key={convo.id} 
-                  convo={convo} 
-                  active={activeConversationId === convo.id}
-                  onSelect={selectConversation}
-                  onPin={togglePin}
-                  onFavorite={toggleFavorite}
-                  onArchive={archiveConvo}
-                  onDelete={deleteConvo}
-                  onRename={triggerRename}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Yesterday Standard List */}
-          {groupedStandard.yesterday.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-text-fog tracking-wider uppercase pl-2">Yesterday</span>
-              {groupedStandard.yesterday.map((convo) => (
-                <SidebarChatItem 
-                  key={convo.id} 
-                  convo={convo} 
-                  active={activeConversationId === convo.id}
-                  onSelect={selectConversation}
-                  onPin={togglePin}
-                  onFavorite={toggleFavorite}
-                  onArchive={archiveConvo}
-                  onDelete={deleteConvo}
-                  onRename={triggerRename}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Last 7 Days List */}
-          {groupedStandard.last7.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-text-fog tracking-wider uppercase pl-2">Previous 7 Days</span>
-              {groupedStandard.last7.map((convo) => (
-                <SidebarChatItem 
-                  key={convo.id} 
-                  convo={convo} 
-                  active={activeConversationId === convo.id}
-                  onSelect={selectConversation}
-                  onPin={togglePin}
-                  onFavorite={toggleFavorite}
-                  onArchive={archiveConvo}
-                  onDelete={deleteConvo}
-                  onRename={triggerRename}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Older List */}
-          {groupedStandard.older.length > 0 && (
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-text-fog tracking-wider uppercase pl-2">Older</span>
-              {groupedStandard.older.map((convo) => (
-                <SidebarChatItem 
-                  key={convo.id} 
-                  convo={convo} 
-                  active={activeConversationId === convo.id}
-                  onSelect={selectConversation}
-                  onPin={togglePin}
-                  onFavorite={toggleFavorite}
-                  onArchive={archiveConvo}
-                  onDelete={deleteConvo}
-                  onRename={triggerRename}
-                />
-              ))}
-            </div>
-          )}
-
-          {conversations.length === 0 && !loadingHistory && (
-            <div className="text-center py-6 text-text-fog text-[12px]">
-              No conversations yet.
-            </div>
-          )}
-        </div>
-      </div>
+      <AgentSidebar
+        conversations={conversations}
+        pinnedConversations={pinnedConversations}
+        favoriteConversations={favoriteConversations}
+        groupedStandard={groupedStandard}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        activeConversationId={activeConversationId}
+        onSelect={selectConversation}
+        onNewChat={createNewChat}
+        onPin={togglePin}
+        onFavorite={toggleFavorite}
+        onArchive={archiveConvo}
+        onDelete={deleteConvo}
+        onRename={triggerRename}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        loadingHistory={loadingHistory}
+      />
 
       {/* ── CHAT CONTAINER ── */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background-mist">
@@ -1038,210 +873,29 @@ export default function AIAgentPage() {
           )}
         </div>
 
-        {/* Input box */}
-        <footer className="p-4 border-t-[2px] border-border-mist bg-surface-white z-10">
-          <form onSubmit={handleMessageSubmit} className="max-w-3xl mx-auto space-y-3">
-            
-            {/* Uploaded files attachment view */}
-            {attachedFiles.length > 0 && (
-              <div className="flex flex-wrap gap-2 pb-2">
-                {attachedFiles.map((file, idx) => (
-                  <div 
-                    key={idx}
-                    className="flex items-center gap-2 px-2.5 py-1 bg-background-mist rounded-xl border border-border-mist text-[11px] font-medium text-text-ink"
-                  >
-                    <span className="max-w-[150px] truncate">{file.name}</span>
-                    <span className="text-[9px] text-text-slate">({formatBytes(file.size)})</span>
-                    <button 
-                      type="button" 
-                      onClick={() => removeAttachedFile(idx)}
-                      className="text-text-slate hover:text-error transition-colors cursor-pointer"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Input wrapper */}
-            <div className="flex items-end gap-2 border-[2px] border-border-mist focus-within:border-primary/50 bg-background-mist rounded-2xl px-4 py-2.5 transition-colors duration-200">
-              
-              {/* Attachment Button */}
-              <button
-                type="button"
-                onClick={handleFileUploadClick}
-                disabled={uploadingFile}
-                className="p-1.5 hover:bg-border-mist rounded-xl text-text-slate hover:text-text-ink transition-colors cursor-pointer shrink-0 disabled:opacity-50"
-                title="Attach files"
-              >
-                {uploadingFile ? (
-                  <Loader2 className="w-5 h-5 animate-spin text-primary" />
-                ) : (
-                  <Paperclip className="w-5 h-5" />
-                )}
-              </button>
-              <input 
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                className="hidden"
-              />
-
-              {/* Text Input area */}
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                placeholder="Message Syncra agent..."
-                value={inputVal}
-                onChange={handleInputChange}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleMessageSubmit(e);
-                  }
-                }}
-                disabled={loadingChat}
-                className="flex-1 bg-transparent border-none text-[13px] leading-relaxed max-h-[200px] py-1.5 resize-none focus:outline-none placeholder-text-slate text-text-ink"
-              />
-
-              {/* Submit Button */}
-              <button
-                type="submit"
-                disabled={(!inputVal.trim() && attachedFiles.length === 0) || loadingChat}
-                className="p-2.5 bg-gradient-to-br from-primary to-primary/80 hover:from-primary hover:to-primary/90 text-white rounded-xl shadow-md hover:shadow-lg transition-all duration-200 shrink-0 cursor-pointer disabled:opacity-50 disabled:transform-none disabled:shadow-none"
-              >
-                {loadingChat ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
-                )}
-              </button>
-            </div>
-            
-            <div className="flex justify-between items-center px-2">
-              <span className="text-[9px] text-text-fog">
-                Press Enter to send, Shift+Enter for new line.
-              </span>
-              {loadingChat && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    // Abort current streaming reader
-                    if (eventSourceRef.current) eventSourceRef.current.abort();
-                    setLoadingChat(false);
-                    setStreamingContent("");
-                    setExecutingTool(null);
-                  }}
-                  className="text-[10px] text-error font-bold hover:underline cursor-pointer"
-                >
-                  Cancel Generation
-                </button>
-              )}
-            </div>
-          </form>
-        </footer>
+        <ChatInput
+          onSend={handleMessageSubmit}
+          attachedFiles={attachedFiles}
+          onFileAttach={handleFileUploadClick}
+          onRemoveFile={removeAttachedFile}
+          uploadingFile={uploadingFile}
+          inputRef={textareaRef}
+          fileInputRef={fileInputRef}
+          value={inputVal}
+          onChange={handleInputChange}
+          isGenerating={loadingChat}
+          onCancel={cancelGeneration}
+          formatBytes={formatBytes}
+        />
       </div>
 
-      {/* ── MEMORY MANAGER PANEL (Sheet side drawer) ── */}
-      {memoryOpen && (
-        <div className="absolute inset-0 bg-black/40 dark:bg-black/60 z-40 flex justify-end">
-          <div className="w-full max-w-md bg-surface-white dark:bg-[#111827] h-full border-l-2.5 border-secondary dark:border-slate-800 flex flex-col neo-shadow-lg">
-            
-            {/* Sheet Header */}
-            <div className="p-4 border-b-2.5 border-secondary dark:border-slate-800 flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <Database className="w-5 h-5 text-accent-purple" />
-                <span className="font-display font-bold text-[15px]">Agent Memory</span>
-              </div>
-              <button 
-                onClick={() => setMemoryOpen(false)}
-                className="p-1 hover:bg-border-mist dark:hover:bg-slate-800 rounded-btn transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Memory form */}
-            <form onSubmit={saveMemory} className="p-4 border-b border-secondary/10 dark:border-slate-800 space-y-3">
-              <span className="text-[10px] font-bold text-text-fog uppercase block">Add manual memory</span>
-              
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  placeholder="Key (e.g. preferred_model)"
-                  value={memoryKey}
-                  onChange={(e) => setMemoryKey(e.target.value)}
-                  className="flex-1 text-[12px] p-2 bg-background-mist dark:bg-slate-800 rounded-btn border border-secondary/20 dark:border-slate-700 focus:outline-none"
-                  required
-                />
-                
-                <select
-                  value={memoryCategory}
-                  onChange={(e) => setMemoryCategory(e.target.value)}
-                  className="text-[12px] p-2 bg-background-mist dark:bg-slate-800 rounded-btn border border-secondary/20 dark:border-slate-700 focus:outline-none"
-                >
-                  <option value="context">Context</option>
-                  <option value="instruction">Instruction</option>
-                  <option value="preference">Preference</option>
-                </select>
-              </div>
-
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  placeholder="Memory value detail..."
-                  value={memoryVal}
-                  onChange={(e) => setMemoryVal(e.target.value)}
-                  className="flex-1 text-[12px] p-2 bg-background-mist dark:bg-slate-800 rounded-btn border border-secondary/20 dark:border-slate-700 focus:outline-none"
-                  required
-                />
-                <button
-                  type="submit"
-                  className="py-1.5 px-3 bg-primary text-white font-bold text-[12px] rounded-btn neo-border neo-shadow-sm hover:-translate-y-0.5 active:translate-y-0 cursor-pointer shrink-0"
-                >
-                  Add
-                </button>
-              </div>
-            </form>
-
-            {/* Memory List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-hide">
-              <span className="text-[10px] font-bold text-text-fog uppercase block pb-1">Stored Memories</span>
-              
-              {memories.map((mem) => (
-                <div 
-                  key={mem.id}
-                  className="p-3 bg-background-mist dark:bg-[#0F1629] rounded-panel border border-secondary/10 dark:border-slate-800 flex justify-between items-start gap-3"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[12px] font-mono font-bold text-text-ink">{mem.key}</span>
-                      <span className="text-[8px] bg-accent-purple/10 text-accent-purple px-1.5 py-0.5 rounded font-bold uppercase">
-                        {mem.category}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-text-slate">{mem.value}</p>
-                  </div>
-                  <button
-                    onClick={() => deleteMemoryItem(mem.id)}
-                    className="p-1 hover:text-error text-text-slate transition-colors cursor-pointer"
-                    title="Forget Memory"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-
-              {memories.length === 0 && (
-                <div className="text-center py-8 text-text-fog text-[12px]">
-                  No memory records found.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <MemoryManagerPanel
+        isOpen={memoryOpen}
+        memories={memories}
+        onAddMemory={handleAddMemory}
+        onDeleteMemory={deleteMemoryItem}
+        onClose={() => setMemoryOpen(false)}
+      />
 
       {/* ── RENAME MODAL ── */}
       {renameModalOpen && (
@@ -1315,186 +969,6 @@ export default function AIAgentPage() {
         </div>
       )}
 
-    </div>
-  );
-}
-
-// ── SUB-COMPONENT: SIDEBAR CHAT ITEM ──
-function SidebarChatItem({
-  convo,
-  active,
-  onSelect,
-  onPin,
-  onFavorite,
-  onArchive,
-  onDelete,
-  onRename,
-}: {
-  convo: any;
-  active: boolean;
-  onSelect: (id: string) => void;
-  onPin: (id: string, pinned: boolean) => void;
-  onFavorite: (id: string, favorite: boolean) => void;
-  onArchive: (id: string) => void;
-  onDelete: (id: string) => void;
-  onRename: (id: string, title: string) => void;
-}) {
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  return (
-    <div 
-      className={`group w-full p-2.5 rounded-btn transition-all duration-200 border-2 flex items-center justify-between gap-2 relative ${
-        active 
-          ? "bg-secondary text-white border-secondary dark:bg-[#1E293B] dark:border-slate-700" 
-          : "bg-surface-white dark:bg-[#111827] border-transparent hover:bg-border-mist dark:hover:bg-slate-800"
-      }`}
-    >
-      <button
-        onClick={() => onSelect(convo.id)}
-        className="flex-1 text-left flex items-center gap-2 overflow-hidden cursor-pointer"
-      >
-        <MessageSquare className={`w-4 h-4 shrink-0 ${active ? "text-primary" : "text-text-fog"}`} />
-        <span className="text-[12.5px] font-semibold truncate leading-tight pr-1">
-          {convo.title || "New Chat"}
-        </span>
-      </button>
-
-      {/* Action Buttons */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        
-        {/* Toggle Pin */}
-        <button
-          onClick={() => onPin(convo.id, !convo.pinned)}
-          className={`p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer ${
-            convo.pinned ? "text-primary opacity-100" : "text-text-fog"
-          }`}
-          title={convo.pinned ? "Unpin Chat" : "Pin Chat"}
-        >
-          <Pin className={`w-3.5 h-3.5 ${convo.pinned ? "rotate-45" : ""}`} />
-        </button>
-
-        {/* Toggle Favorite */}
-        <button
-          onClick={() => onFavorite(convo.id, !convo.favorite)}
-          className={`p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer ${
-            convo.favorite ? "text-accent-orange opacity-100" : "text-text-fog"
-          }`}
-          title={convo.favorite ? "Unfavorite Chat" : "Favorite Chat"}
-        >
-          <Star className={`w-3.5 h-3.5 ${convo.favorite ? "fill-accent-orange" : ""}`} />
-        </button>
-
-        {/* Dropdown/Quick Actions Toggle */}
-        <button
-          onClick={() => setMenuOpen(!menuOpen)}
-          className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-fog cursor-pointer"
-          title="More actions"
-        >
-          <Settings className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
-      {/* Floating Settings Menu */}
-      {menuOpen && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-          <div className="absolute right-2 top-9 bg-white dark:bg-[#1E293B] rounded-panel border-2 border-secondary dark:border-slate-700 shadow-md z-40 w-36 overflow-hidden py-1">
-            <button
-              onClick={() => { onRename(convo.id, convo.title); setMenuOpen(false); }}
-              className="w-full text-left px-3 py-1.5 hover:bg-border-mist dark:hover:bg-slate-700 text-[11px] font-bold text-text-ink flex items-center gap-1.5 cursor-pointer"
-            >
-              Rename
-            </button>
-            <button
-              onClick={() => { onArchive(convo.id); setMenuOpen(false); }}
-              className="w-full text-left px-3 py-1.5 hover:bg-border-mist dark:hover:bg-slate-700 text-[11px] font-bold text-text-ink flex items-center gap-1.5 cursor-pointer"
-            >
-              <Archive className="w-3 h-3 text-text-fog" />
-              Archive
-            </button>
-            <button
-              onClick={() => { onDelete(convo.id); setMenuOpen(false); }}
-              className="w-full text-left px-3 py-1.5 hover:bg-error/10 text-error hover:bg-border-mist text-[11px] font-bold flex items-center gap-1.5 cursor-pointer border-t border-secondary/10 dark:border-slate-800"
-            >
-              <Trash2 className="w-3 h-3" />
-              Delete
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ── SUB-COMPONENT: TOOL EXECUTION ITEM ──
-function ToolExecutionItem({ tc }: { tc: any }) {
-  const [expanded, setExpanded] = useState(false);
-  const isSuccess = tc.status === "success";
-  const isFailed = tc.status === "failed";
-  const duration = tc.duration ? `${(tc.duration / 1000).toFixed(2)}s` : null;
-
-  return (
-    <div className="bg-background-mist dark:bg-[#0F1629] rounded-panel border border-secondary/15 dark:border-slate-800 overflow-hidden text-[12.5px] font-mono shadow-sm">
-      
-      {/* Title Bar */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between p-3 hover:bg-secondary/5 dark:hover:bg-slate-800 cursor-pointer"
-      >
-        <div className="flex items-center gap-2">
-          {tc.status === "pending" && <Loader2 className="w-4 h-4 animate-spin text-accent-purple" />}
-          {isSuccess && <Check className="w-4 h-4 text-success" />}
-          {isFailed && <ShieldAlert className="w-4 h-4 text-error" />}
-          
-          <span className="font-bold text-text-ink">
-            {tc.tool_name}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2 text-[10px]">
-          {duration && <span className="text-text-slate font-sans font-medium">{duration}</span>}
-          <span 
-            className={`px-1.5 py-0.5 rounded font-sans font-bold uppercase text-[9px] ${
-              tc.status === "pending" ? "bg-accent-purple/10 text-accent-purple" : 
-              isSuccess ? "bg-success-bg text-success" : "bg-error-bg text-error"
-            }`}
-          >
-            {tc.status}
-          </span>
-        </div>
-      </button>
-
-      {/* Expanded body (Input args and Output results) */}
-      {expanded && (
-        <div className="p-3 bg-surface-white dark:bg-[#111827] border-t border-secondary/10 dark:border-slate-800 space-y-3 font-mono text-[11px] text-text-slate">
-          
-          {/* Input Parameters */}
-          <div className="space-y-1">
-            <span className="text-[10px] font-bold text-text-fog uppercase block font-sans">Arguments</span>
-            <pre className="p-2 bg-background-mist dark:bg-[#0F1629] rounded border border-secondary/5 dark:border-slate-800 overflow-x-auto scrollbar-hide text-text-ink">
-              {JSON.stringify(tc.arguments, null, 2)}
-            </pre>
-          </div>
-
-          {/* Output Results */}
-          {(tc.output || tc.error) && (
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-text-fog uppercase block font-sans">
-                {isFailed ? "Error Message" : "Output Results"}
-              </span>
-              <pre className={`p-2 rounded border overflow-x-auto scrollbar-hide text-text-ink ${
-                isFailed 
-                  ? "bg-error-bg/30 border-error/20 text-error" 
-                  : "bg-background-mist dark:bg-[#0F1629] border-secondary/5 dark:border-slate-800"
-              }`}>
-                {tc.output ? (
-                  tc.output.startsWith("{") ? JSON.stringify(JSON.parse(tc.output), null, 2) : tc.output
-                ) : tc.error}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
