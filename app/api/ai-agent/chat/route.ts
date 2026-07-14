@@ -188,6 +188,13 @@ Be concise, clear, and direct. When you use tools, explain briefly what you are 
           } else {
             openAiMessages.push({ role: "assistant", content: msg.content });
           }
+        } else if (msg.role === "tool") {
+          const metadata = (msg.metadata || {}) as Record<string, any>;
+          openAiMessages.push({
+            role: "tool",
+            tool_call_id: metadata.tool_call_id || "unknown",
+            content: msg.content,
+          });
         }
       }
 
@@ -265,7 +272,7 @@ Be concise, clear, and direct. When you use tools, explain briefly what you are 
               tool_name: tc.name,
               provider: "mcp",
               arguments: parsedArgs,
-              status: "running",
+              status: "pending",
             });
 
             // 2. Yield executing status to client
@@ -289,6 +296,14 @@ Be concise, clear, and direct. When you use tools, explain briefly what you are 
             });
 
             const toolOutputContent = execResult.output || execResult.error || "No output returned";
+
+            // 5. Save tool message to database
+            await repo.createMessage({
+              conversation_id: conversation.id,
+              role: "tool",
+              content: toolOutputContent,
+              metadata: { tool_call_id: tc.id, tool_name: tc.name, success: execResult.success },
+            });
 
             // 6. Yield tool result to client
             yield {

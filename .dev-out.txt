@@ -1,7 +1,0 @@
-▲ Next.js 16.2.10 (webpack)
-- Local:         http://localhost:3002
-- Network:       http://192.168.174.1:3002
-- Environments: .env.local
-✓ Ready in 1877ms
-  Using cached swc package @next/swc-win32-x64-msvc...
-

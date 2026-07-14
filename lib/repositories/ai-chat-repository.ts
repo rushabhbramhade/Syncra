@@ -14,7 +14,7 @@ export interface AIConversationRecord {
 export interface AIMessageRecord {
   id: string;
   conversation_id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   latency?: number | null;
   tokens_used?: number | null;
@@ -40,7 +40,7 @@ export interface AIToolCallRecord {
   tool_name: string;
   provider: string;
   arguments: Record<string, unknown>;
-  status: "running" | "success" | "failed";
+  status: "pending" | "running" | "success" | "failed";
   duration?: number | null;
   output?: string | null;
   error?: string | null;
