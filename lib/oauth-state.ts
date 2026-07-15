@@ -7,10 +7,11 @@ interface StatePayload {
   userId: string;
   timestamp: number;
   redirectUri?: string;
+  codeVerifier?: string;
 }
 
-function encodePayload(userId: string, timestamp: number, redirectUri?: string): string {
-  return JSON.stringify({ userId, timestamp, redirectUri });
+function encodePayload(userId: string, timestamp: number, redirectUri?: string, codeVerifier?: string): string {
+  return JSON.stringify({ userId, timestamp, redirectUri, codeVerifier });
 }
 
 function decodePayload(payload: string): StatePayload | null {
@@ -25,12 +26,38 @@ function decodePayload(payload: string): StatePayload | null {
   }
 }
 
-export function signState(userId: string, redirectUri?: string): string {
+export function signState(userId: string, redirectUri?: string, codeVerifier?: string): string {
   const secret = getHmacSecret();
   const timestamp = Date.now();
-  const payload = encodePayload(userId, timestamp, redirectUri);
+  const payload = encodePayload(userId, timestamp, redirectUri, codeVerifier);
   const hmac = crypto.createHmac("sha256", secret).update(payload).digest("hex");
   return `${payload}.${hmac}`;
+}
+
+export function verifyStateFull(state: string, expectedRedirectUri?: string): { userId: string; codeVerifier?: string } | null {
+  try {
+    const secret = getHmacSecret();
+    const dotIndex = state.lastIndexOf(".");
+    if (dotIndex === -1) return null;
+    const payload = state.substring(0, dotIndex);
+    const signature = state.substring(dotIndex + 1);
+
+    const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+      return null;
+    }
+
+    const decoded = decodePayload(payload);
+    if (!decoded) return null;
+
+    if (expectedRedirectUri && decoded.redirectUri && decoded.redirectUri !== expectedRedirectUri) {
+      return null;
+    }
+
+    return { userId: decoded.userId, codeVerifier: decoded.codeVerifier };
+  } catch {
+    return null;
+  }
 }
 
 export function verifyState(state: string, expectedRedirectUri?: string): string | null {

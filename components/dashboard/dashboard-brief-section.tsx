@@ -43,7 +43,7 @@ export function DashboardBriefSection({
             </div>
             <div>
               <h2 className="font-display font-black text-2xl text-secondary">
-                {title || "Today&apos;s Brief"}
+                {title || "General Workspace Update"}
               </h2>
               <p className="text-text-slate text-[14px] font-medium">
                 {generatedAt

@@ -6,9 +6,7 @@ import { useAuth } from "@/components/auth-provider";
 import { signOutAction } from "@/app/actions";
 import { generateDashboardBrief, DashboardBriefData } from "@/app/actions/dashboard";
 import {
-  getBriefingsAction,
-  generateBriefingAction,
-  getBriefingDetailsAction
+  generateBriefingAction
 } from "@/app/actions/briefing";
 import {
   Mail, Inbox, MessageCircle, Wifi, WifiOff
@@ -18,6 +16,7 @@ import { StatsOverview } from "@/components/dashboard/stats-overview";
 import { DashboardBriefSection } from "@/components/dashboard/dashboard-brief-section";
 import { ConnectedAppsGrid } from "@/components/dashboard/connected-apps-grid";
 import { PriorityItemsCard } from "@/components/dashboard/priority-items-card";
+
 
 interface ExtendedBriefData extends DashboardBriefData {
   executiveSummary?: string;
@@ -44,6 +43,7 @@ export default function Dashboard() {
   const [isBriefLoading, setIsBriefLoading] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
   const [isDemoMode, setIsDemoMode] = useState(false);
+
   const [connectedApps, setConnectedApps] = useState<{
     id: string;
     name: string;
@@ -57,62 +57,36 @@ export default function Dashboard() {
     setDataError(null);
 
     try {
-      const { getGmailConnectionStatus } = await import("@/app/actions/integrations");
-      const gmailConn = await getGmailConnectionStatus(authUserId);
+      const { getConnectionStatus } = await import("@/app/actions/integrations");
+      const providerIds = ["gmail", "slack", "telegram", "whatsapp"];
+      const results = await Promise.allSettled(
+        providerIds.map(id => getConnectionStatus(authUserId, id))
+      );
 
-      const apps = [
-        { id: "gmail", name: "Gmail", icon: "/gmail.png", connected: !!gmailConn },
-        { id: "slack", name: "Slack", icon: "/slack.png", connected: false },
-        { id: "telegram", name: "Telegram", icon: "/telegram.png", connected: false },
-        { id: "whatsapp", name: "WhatsApp", icon: "/whatsapp.png", connected: false },
-        { id: "outlook", name: "Outlook", icon: "/email.png", connected: false },
-      ];
+      const apps = providerIds.map((id, i) => ({
+        id,
+        name: id.charAt(0).toUpperCase() + id.slice(1),
+        icon: id === "gmail" ? "/gmail.png" : `/${id}.png`,
+        connected: results[i].status === "fulfilled" && results[i].value !== null,
+      }));
       setConnectedApps(apps);
 
-      const briefings = await getBriefingsAction(activeUserId, { limit: 1 });
+      const activePlatformIds = apps.filter(a => a.connected).map(a => a.id);
+      let finalPlatforms = [...activePlatformIds];
 
-      if (briefings && briefings.length > 0) {
-        const latestBrief = briefings[0];
-        const { items } = await getBriefingDetailsAction(activeUserId, latestBrief.id!);
-        const fullContent = latestBrief.full_content as any;
+      const stored = localStorage.getItem("syncra-mock-connected-platforms");
+      if (stored) {
+        try {
+          const mockApps = JSON.parse(stored);
+          const uniqueMockApps = mockApps.filter((id: string) => !activePlatformIds.includes(id));
+          if (uniqueMockApps.length > 0) setIsDemoMode(true);
+          finalPlatforms = Array.from(new Set([...finalPlatforms, ...uniqueMockApps]));
+        } catch {}
+      }
 
-        const formatted: ExtendedBriefData = {
-          importantCount: fullContent.totalImportantItems || 0,
-          priorityCount: fullContent.highPriorityCount || 0,
-          followUpsCount: fullContent.categories?.followUps?.items?.length || 0,
-          briefItems: items.map(item => ({
-            platform: item.platform,
-            text: (item.metadata as any)?.shortSummary || (item.metadata as any)?.title || ""
-          })),
-          priorityItems: items.map(item => ({
-            platform: item.platform,
-            title: (item.metadata as any)?.title || "",
-            time: new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            description: (item.metadata as any)?.shortSummary || "",
-            priority: item.priority === 'high' ? 'High' : item.priority === 'normal' ? 'Medium' : 'Low'
-          })),
-          executiveSummary: latestBrief.executive_summary,
-          title: latestBrief.title,
-          generatedAt: latestBrief.generated_at,
-          id: latestBrief.id
-        };
-
-        setBriefData(formatted);
-      } else {
-        const activePlatformIds = apps.filter(a => a.connected).map(a => a.id);
-        let finalPlatforms = [...activePlatformIds];
-
-        const stored = localStorage.getItem("syncra-mock-connected-platforms");
-        if (stored) {
-          try {
-            const mockApps = JSON.parse(stored);
-            if (mockApps.length > 0) setIsDemoMode(true);
-            finalPlatforms = Array.from(new Set([...finalPlatforms, ...mockApps]));
-          } catch {}
-        }
-
-        const data = await generateDashboardBrief(authUserId, finalPlatforms);
-        setBriefData(data || null);
+      const data = await generateDashboardBrief(authUserId, finalPlatforms);
+      if (data) {
+        setBriefData(data);
       }
     } catch (e) {
       console.error("Failed to load dashboard data:", e);
@@ -120,6 +94,7 @@ export default function Dashboard() {
     } finally {
       setIsBriefLoading(false);
     }
+
   }, [user, activeUserId]);
 
   const handleRegenerate = async () => {
@@ -167,7 +142,7 @@ export default function Dashboard() {
     if (app && app.icon) {
       return <img src={app.icon} alt={app.name} className={`object-contain ${className}`} />;
     }
-    if (platform === "gmail" || platform === "outlook") return <Mail className={`text-text-slate ${className}`} />;
+    if (platform === "gmail") return <Mail className={`text-text-slate ${className}`} />;
     if (platform === "slack" || platform === "whatsapp" || platform === "telegram") return <MessageCircle className={`text-text-slate ${className}`} />;
     return <Inbox className={`text-text-slate ${className}`} />;
   };
@@ -257,6 +232,7 @@ export default function Dashboard() {
           />
         </div>
       </div>
+
     </div>
   );
 }

@@ -8,9 +8,17 @@ import { Card } from "@/components/ui/card";
 import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
 import {
   getGmailConnectionStatus,
+  getConnectionStatus,
   disconnectGmailConnection,
+  disconnectConnection,
   checkGoogleApiConfig,
   getProviderTools,
+  connectTelegramAction,
+  disconnectTelegramWebhookAction,
+  connectDiscordAction,
+  getDiscordInviteUrlAction,
+  disconnectLinkedinAction,
+  disconnectGithubAction,
   ConnectionStatus
 } from "@/app/actions/integrations";
 import {
@@ -32,6 +40,8 @@ import type { PlatformCardConnectionDetails } from "@/components/dashboard/integ
 import { COUNTRIES } from "@/components/dashboard/integrations/country-dropdown-portal";
 
 const WhatsAppConnectionModal = dynamic(() => import("@/components/dashboard/integrations/whatsapp-connection-modal").then(mod => mod.WhatsAppConnectionModal), { ssr: false });
+const TelegramConnectionModal = dynamic(() => import("@/components/dashboard/integrations/telegram-connection-modal").then(mod => mod.TelegramConnectionModal), { ssr: false });
+const DiscordConnectionModal = dynamic(() => import("@/components/dashboard/integrations/discord-connection-modal").then(mod => mod.DiscordConnectionModal), { ssr: false });
 const MCPSettingsModal = dynamic(() => import("@/components/dashboard/integrations/mcp-settings-modal").then(mod => mod.MCPSettingsModal), { ssr: false });
 
 interface Platform {
@@ -65,10 +75,10 @@ const PLATFORMS = [
     hasOAuth: true,
   },
   {
-    id: "outlook",
-    name: "Outlook",
-    icon: "/email.png",
-    description: "Access Microsoft Outlook inbox messages, folders, calendars, and send mail drafts.",
+    id: "github",
+    name: "GitHub",
+    icon: "/github.svg",
+    description: "Full-stack DevOps integration: monitor frontend/backend issues, track database migrations, review PRs, and trigger CI/CD workflow actions.",
     hasOAuth: true,
   },
   {
@@ -88,15 +98,8 @@ const PLATFORMS = [
   {
     id: "linkedin",
     name: "LinkedIn",
-    icon: "",
+    icon: "/linkedin.svg",
     description: "Share professional feed posts, sync user profiles, and retrieve basic connection stats.",
-    hasOAuth: true,
-  },
-  {
-    id: "github",
-    name: "GitHub",
-    icon: "",
-    description: "Monitor issue updates, repository activities, and trigger workflow actions.",
     hasOAuth: true,
   }
 ];
@@ -112,6 +115,11 @@ export default function IntegrationsPage() {
   const isMounted = useRef(true);
 
   const [gmailStatus, setGmailStatus] = useState<ConnectionStatus | null>(null);
+  const [slackStatus, setSlackStatus] = useState<ConnectionStatus | null>(null);
+  const [telegramStatus, setTelegramStatus] = useState<ConnectionStatus | null>(null);
+  const [discordStatus, setDiscordStatus] = useState<ConnectionStatus | null>(null);
+  const [linkedinStatus, setLinkedinStatus] = useState<ConnectionStatus | null>(null);
+  const [githubStatus, setGithubStatus] = useState<ConnectionStatus | null>(null);
   
   const [mockConnectedList, setMockConnectedList] = useState<string[]>([]);
   
@@ -126,6 +134,8 @@ export default function IntegrationsPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const [whatsappStatus, setWhatsAppStatus] = useState<ConnectionStatus | null>(null);
+  const [showTelegramConnectModal, setShowTelegramConnectModal] = useState(false);
+  const [showDiscordConnectModal, setShowDiscordConnectModal] = useState(false);
   const [showWhatsAppConnectModal, setShowWhatsAppConnectModal] = useState(false);
   const [whatsappPhoneNumber, setWhatsAppPhoneNumber] = useState("");
   const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
@@ -168,6 +178,30 @@ export default function IntegrationsPage() {
       }
     }, 3000);
   }, [stopWhatsAppPolling]);
+
+  const handleTelegramConnect = async (botToken: string) => {
+    if (!user) return { success: false, error: "Not authenticated" };
+    const res = await connectTelegramAction(user.id, botToken);
+    if (res.success) {
+      setTelegramStatus({ connected: true, email: res.username || "", connectedAt: "", lastSyncAt: "", provider: "telegram", status: "active" });
+      setSuccessMessage("Telegram connected successfully!");
+    }
+    return res;
+  };
+
+  const handleDiscordConnect = async () => {
+    if (!user) return { success: false, error: "Not authenticated" };
+    const res = await connectDiscordAction(user.id);
+    if (res.success) {
+      setDiscordStatus({ connected: true, email: res.username || "", connectedAt: "", lastSyncAt: "", provider: "discord", status: "active" });
+      setSuccessMessage("Discord connected successfully!");
+    }
+    return res;
+  };
+
+  const handleGetDiscordInviteUrl = async () => {
+    return getDiscordInviteUrlAction();
+  };
 
   const handleWhatsAppConnectClick = () => {
     setWhatsAppPhoneNumber("");
@@ -258,16 +292,26 @@ export default function IntegrationsPage() {
         const timeout = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("DATA_FETCH_TIMEOUT")), 8000)
         );
-        const [gmailConn, whatsappConnResult, isConfigured] = await Promise.race([
+        const [gmailConn, slackConn, telegramConn, discordConn, linkedinConn, githubConn, whatsappConnResult, isConfigured] = await Promise.race([
           Promise.all([
             getGmailConnectionStatus(userId),
+            getConnectionStatus(userId, "slack"),
+            getConnectionStatus(userId, "telegram"),
+            getConnectionStatus(userId, "discord"),
+            getConnectionStatus(userId, "linkedin"),
+            getConnectionStatus(userId, "github"),
             getWhatsAppStatusAction(userId),
             checkGoogleApiConfig(),
           ]),
           timeout.then(() => { throw new Error("DATA_FETCH_TIMEOUT"); })
-        ]) as [ConnectionStatus | null, { success: boolean; status: ConnectionStatus | null; error?: string }, boolean];
+        ]) as [ConnectionStatus | null, ConnectionStatus | null, ConnectionStatus | null, ConnectionStatus | null, ConnectionStatus | null, ConnectionStatus | null, { success: boolean; status: ConnectionStatus | null; error?: string }, boolean];
         if (!isMounted.current) return;
         setGmailStatus(gmailConn);
+        setSlackStatus(slackConn);
+        setTelegramStatus(telegramConn);
+        setDiscordStatus(discordConn);
+        setLinkedinStatus(linkedinConn);
+        setGithubStatus(githubConn);
         if (whatsappConnResult && whatsappConnResult.success) {
           setWhatsAppStatus(whatsappConnResult.status);
           if (whatsappConnResult.status?.status === "pairing") {
@@ -290,14 +334,12 @@ export default function IntegrationsPage() {
         try {
           setMockConnectedList(JSON.parse(stored));
         } catch {
-          const defaults = ["slack"];
-          setMockConnectedList(defaults);
-          localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(defaults));
+          setMockConnectedList([]);
+          localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify([]));
         }
       } else {
-        const defaults = ["slack"];
-        setMockConnectedList(defaults);
-        localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(defaults));
+        setMockConnectedList([]);
+        localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify([]));
       }
 
       const storedTools = localStorage.getItem("syncra-enabled-mcp-tools");
@@ -352,10 +394,39 @@ export default function IntegrationsPage() {
         router.replace("/dashboard/integrations");
       }, 0);
       return () => clearTimeout(timer);
+    } else if (success === "slack") {
+      const timer = setTimeout(() => {
+        setSuccessMessage("Slack connected successfully!");
+        const list = mockConnectedList.filter(id => id !== "slack");
+        setMockConnectedList(list);
+        localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(list));
+        setSlackStatus({ connected: true, email: "", connectedAt: "", lastSyncAt: "", provider: "slack", status: "active" });
+        router.replace("/dashboard/integrations");
+      }, 0);
+      return () => clearTimeout(timer);
+    } else if (success === "linkedin") {
+      const timer = setTimeout(() => {
+        setSuccessMessage("LinkedIn connected successfully!");
+        const list = mockConnectedList.filter(id => id !== "linkedin");
+        setMockConnectedList(list);
+        localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(list));
+        setLinkedinStatus({ connected: true, email: "", connectedAt: "", lastSyncAt: "", provider: "linkedin", status: "active" });
+        router.replace("/dashboard/integrations");
+      }, 0);
+      return () => clearTimeout(timer);
+    } else if (success === "github") {
+      const timer = setTimeout(() => {
+        setSuccessMessage("GitHub connected successfully!");
+        const list = mockConnectedList.filter(id => id !== "github");
+        setMockConnectedList(list);
+        localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(list));
+        setGithubStatus({ connected: true, email: "", connectedAt: "", lastSyncAt: "", provider: "github", status: "active" });
+        router.replace("/dashboard/integrations");
+      }, 0);
     } else if (error) {
       const timer = setTimeout(() => {
         if (error === "missing_credentials") {
-          setErrorMessage("Google OAuth credentials are not configured on the server. Please check .env.local.");
+          setErrorMessage("OAuth credentials are not configured on the server. Please check .env.local.");
         } else {
           setErrorMessage(`OAuth authentication failed: ${decodeURIComponent(error)}`);
         }
@@ -521,11 +592,26 @@ export default function IntegrationsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {PLATFORMS.map((platform) => {
               const isGmail = platform.id === "gmail";
+              const isSlack = platform.id === "slack";
               const isWhatsApp = platform.id === "whatsapp";
+              const isTelegram = platform.id === "telegram";
+              const isDiscord = platform.id === "discord";
+              const isLinkedin = platform.id === "linkedin";
+              const isGithub = platform.id === "github";
               const isConnected = isGmail
                 ? !!gmailStatus
+                : isSlack
+                ? !!slackStatus
                 : isWhatsApp
                 ? (!!whatsappStatus && whatsappStatus.status === "active")
+                : isTelegram
+                ? !!telegramStatus
+                : isDiscord
+                ? !!discordStatus
+                : isLinkedin
+                ? !!linkedinStatus
+                : isGithub
+                ? !!githubStatus
                 : mockConnectedList.includes(platform.id);
 
               const connectionDetails: PlatformCardConnectionDetails | undefined = !isConnected ? undefined
@@ -534,10 +620,35 @@ export default function IntegrationsPage() {
                     connectedAt: gmailStatus.connectedAt,
                     lastSyncAt: gmailStatus.lastSyncAt,
                   }
+                : isSlack && slackStatus ? {
+                    email: slackStatus.email,
+                    connectedAt: slackStatus.connectedAt,
+                    lastSyncAt: slackStatus.lastSyncAt,
+                  }
                 : isWhatsApp && whatsappStatus ? {
                     email: whatsappStatus.email,
                     connectedAt: whatsappStatus.connectedAt,
                     lastSyncAt: whatsappStatus.lastSyncAt,
+                  }
+                : isTelegram && telegramStatus ? {
+                    email: telegramStatus.email,
+                    connectedAt: telegramStatus.connectedAt,
+                    lastSyncAt: telegramStatus.lastSyncAt,
+                  }
+                : isDiscord && discordStatus ? {
+                    email: discordStatus.email,
+                    connectedAt: discordStatus.connectedAt,
+                    lastSyncAt: discordStatus.lastSyncAt,
+                  }
+                : isLinkedin && linkedinStatus ? {
+                    email: linkedinStatus.email,
+                    connectedAt: linkedinStatus.connectedAt,
+                    lastSyncAt: linkedinStatus.lastSyncAt,
+                  }
+                : isGithub && githubStatus ? {
+                    email: githubStatus.email,
+                    connectedAt: githubStatus.connectedAt,
+                    lastSyncAt: githubStatus.lastSyncAt,
                   }
                 : undefined;
 
@@ -550,8 +661,18 @@ export default function IntegrationsPage() {
                   onConnect={() => {
                     if (isGmail) {
                       handleGmailConnect();
+                    } else if (isSlack) {
+                      window.location.assign(`/api/slack?userId=${user?.id}`);
                     } else if (isWhatsApp) {
                       handleWhatsAppConnectClick();
+                    } else if (isTelegram) {
+                      setShowTelegramConnectModal(true);
+                    } else if (isDiscord) {
+                      setShowDiscordConnectModal(true);
+                    } else if (isLinkedin) {
+                      window.location.assign(`/api/linkedin?userId=${user?.id}`);
+                    } else if (isGithub) {
+                      window.location.assign(`/api/github?userId=${user?.id}`);
                     } else {
                       handleConnectMockPlatform(platform.id);
                     }
@@ -559,8 +680,20 @@ export default function IntegrationsPage() {
                   onDisconnect={() => {
                     if (isGmail) {
                       handleGmailDisconnect();
+                    } else if (isSlack && user) {
+                      disconnectConnection(user.id, "slack").then(() => setSlackStatus(null));
                     } else if (isWhatsApp) {
                       handleWhatsAppDisconnect();
+                    } else if (isTelegram && user) {
+                      disconnectTelegramWebhookAction(user.id).then(() => {
+                        disconnectConnection(user.id, "telegram").then(() => setTelegramStatus(null));
+                      });
+                    } else if (isDiscord && user) {
+                      disconnectConnection(user.id, "discord").then(() => setDiscordStatus(null));
+                    } else if (isLinkedin && user) {
+                      disconnectLinkedinAction(user.id).then(() => setLinkedinStatus(null));
+                    } else if (isGithub && user) {
+                      disconnectGithubAction(user.id).then(() => setGithubStatus(null));
                     } else {
                       handleDisconnectMockPlatform(platform.id);
                     }
@@ -573,6 +706,17 @@ export default function IntegrationsPage() {
         </Card>
       </div>
 
+      <TelegramConnectionModal
+        isOpen={showTelegramConnectModal}
+        onClose={() => setShowTelegramConnectModal(false)}
+        onConnect={handleTelegramConnect}
+      />
+      <DiscordConnectionModal
+        isOpen={showDiscordConnectModal}
+        onClose={() => setShowDiscordConnectModal(false)}
+        onConnect={handleDiscordConnect}
+        getInviteUrl={handleGetDiscordInviteUrl}
+      />
       <WhatsAppConnectionModal
         isOpen={showWhatsAppConnectModal}
         onClose={() => {

@@ -222,13 +222,13 @@ The response must fit this exact JSON structure:
     {
       "text": "Actionable advice, e.g., 'Reply to Alice regarding PR review'",
       "type": "reply_email" | "prepare_meeting" | "finish_task" | "contact_client" | "schedule_follow_up",
-      "platform": "gmail" | "slack" | "whatsapp" | "telegram" | "outlook" | "discord" | "tasks" | "calendar",
+      "platform": "gmail" | "slack" | "whatsapp" | "telegram" | "discord" | "tasks" | "calendar",
       "sourceId": "unique ID of source item if any, or null"
     }
   ],
   "items": [
     {
-      "platform": "gmail" | "slack" | "whatsapp" | "telegram" | "outlook" | "discord" | "tasks" | "calendar",
+      "platform": "gmail" | "slack" | "whatsapp" | "telegram" | "discord" | "tasks" | "calendar",
       "category": "email" | "meetings" | "messages" | "tasks" | "follow-ups",
       "title": "Brief title summarizing this specific item",
       "priority": "high" | "normal" | "low",

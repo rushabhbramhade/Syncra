@@ -148,16 +148,7 @@ function PlatformCard({
         </div>
       )}
 
-      {platform.id === "outlook" && (
-        <div className="text-[10px] text-warning font-bold mb-3.5 bg-warning-bg border border-warning/20 px-2.5 py-1 rounded-md shrink-0">
-          âš ï¸ missing outlook.png (using email.png)
-        </div>
-      )}
-      {platform.id === "linkedin" && (
-        <div className="text-[10px] text-warning font-bold mb-3.5 bg-warning-bg border border-warning/20 px-2.5 py-1 rounded-md shrink-0">
-          âš ï¸ missing linkedin.png (using inline SVG)
-        </div>
-      )}
+
 
       <div className="w-full flex items-center gap-2 mt-auto shrink-0">
         {isConnected ? (

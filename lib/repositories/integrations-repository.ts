@@ -19,6 +19,17 @@ export interface IntegrationRecord {
 export class IntegrationsRepository {
   constructor(private db: { database: { from(table: string): any } }) {}
 
+  async findAllByProvider(provider: string): Promise<IntegrationRecord[]> {
+    const { data, error } = await this.db.database
+      .from("user_integrations")
+      .select("*")
+      .eq("provider", provider)
+      .eq("status", "active");
+
+    if (error || !data) return [];
+    return data as IntegrationRecord[];
+  }
+
   async findByUserAndProvider(userId: string, provider: string): Promise<IntegrationRecord | null> {
     const { data, error } = await this.db.database
       .from("user_integrations")

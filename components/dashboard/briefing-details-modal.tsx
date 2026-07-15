@@ -55,7 +55,7 @@ export function BriefingDetailsModal({
   
   // Render Platform Icon helper
   const renderIcon = () => {
-    if (platform === "gmail" || platform === "outlook") return <Mail className="w-5 h-5" />;
+    if (platform === "gmail") return <Mail className="w-5 h-5" />;
     if (platform === "slack" || platform === "whatsapp" || platform === "telegram" || platform === "discord") {
       return <MessageCircle className="w-5 h-5" />;
     }

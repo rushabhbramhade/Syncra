@@ -20,101 +20,159 @@ export interface DashboardBriefData {
   }[];
 }
 
-export async function generateDashboardBrief(userId: string, connectedPlatforms: string[]): Promise<DashboardBriefData | null> {
-  if (!process.env.OPENROUTER_API_KEY) {
-    console.warn("OPENROUTER_API_KEY is missing. Returning mock dashboard brief.");
-    return getMockDashboardData();
+const ALL_PROVIDERS = ["gmail", "slack", "whatsapp", "telegram", "discord", "linkedin", "github"] as const;
+
+async function fetchPlatformData(userId: string, platform: string): Promise<{ items: Record<string, unknown>[]; error?: string }> {
+  try {
+    switch (platform) {
+      case "gmail": {
+        const res = await executeMCPAction(userId, "gmail", "gmail_search_emails", { query: "is:unread", limit: 5 });
+        if (res.status === "success" && Array.isArray(res.result)) {
+          return { items: res.result };
+        }
+        return { items: [], error: "No emails or fetch failed" };
+      }
+      case "whatsapp": {
+        const res = await executeMCPAction(userId, "whatsapp", "whatsapp_fetch_messages", { limit: 5 });
+        if (res.status === "success" && Array.isArray(res.result)) {
+          return { items: res.result };
+        }
+        return { items: [], error: "No messages or fetch failed" };
+      }
+      case "slack": {
+        const res = await executeMCPAction(userId, "slack", "slack_fetch_messages", { limit: 5 });
+        if (res.status === "success" && Array.isArray(res.result)) {
+          return { items: res.result };
+        }
+        return { items: [], error: "No messages or fetch failed" };
+      }
+      case "telegram": {
+        const res = await executeMCPAction(userId, "telegram", "telegram_fetch_messages", { limit: 5 });
+        if (res.status === "success" && Array.isArray(res.result)) {
+          return { items: res.result };
+        }
+        return { items: [], error: "No messages or fetch failed" };
+      }
+      case "discord": {
+        const res = await executeMCPAction(userId, "discord", "discord_fetch_recent_messages", { limit: 3 });
+        if (res.status === "success" && Array.isArray(res.result)) {
+          return { items: res.result };
+        }
+        return { items: [], error: "No messages or fetch failed" };
+      }
+      case "linkedin": {
+        const res = await executeMCPAction(userId, "linkedin", "linkedin_get_profile", {});
+        if (res.status === "success" && res.result) {
+          return { items: [res.result as Record<string, unknown>] };
+        }
+        return { items: [], error: "No profile data or fetch failed" };
+      }
+      case "github": {
+        const [issues, notifications] = await Promise.allSettled([
+          executeMCPAction(userId, "github", "github_list_issues", {}),
+          executeMCPAction(userId, "github", "github_get_notifications", {}),
+        ]);
+        const items: Record<string, unknown>[] = [];
+        if (issues.status === "fulfilled" && issues.value.status === "success" && Array.isArray(issues.value.result)) {
+          items.push(...(issues.value.result as Record<string, unknown>[]).slice(0, 3));
+        }
+        if (notifications.status === "fulfilled" && notifications.value.status === "success" && Array.isArray(notifications.value.result)) {
+          items.push(...(notifications.value.result as Record<string, unknown>[]).slice(0, 3));
+        }
+        return { items };
+      }
+      default:
+        return { items: [], error: `No fetcher for ${platform}` };
+    }
+  } catch {
+    return { items: [], error: `Failed to fetch ${platform}` };
+  }
+}
+
+function extractText(item: Record<string, unknown>): string {
+  return (item as any).text || (item as any).snippet || (item as any).message || (item as any).subject || JSON.stringify(item).slice(0, 120);
+}
+
+function extractSender(item: Record<string, unknown>): string {
+  return (item as any).from || (item as any).sender || (item as any).author || "Unknown";
+}
+
+function buildBriefFromData(platformData: Record<string, { items: Record<string, unknown>[]; error?: string }>): DashboardBriefData {
+  const briefItems: DashboardBriefData["briefItems"] = [];
+  const priorityItems: DashboardBriefData["priorityItems"] = [];
+  let totalImportant = 0;
+
+  for (const [platform, data] of Object.entries(platformData)) {
+    if (!data.items || data.items.length === 0) continue;
+
+    for (const item of data.items) {
+      const text = extractText(item);
+      const sender = extractSender(item);
+      totalImportant++;
+
+      briefItems.push({
+        platform,
+        text: text.length > 120 ? `${text.slice(0, 117)}...` : text,
+      });
+
+      priorityItems.push({
+        platform,
+        title: text.slice(0, 60) || `New ${platform} item`,
+        time: (item as any).date || (item as any).receivedAt || (item as any).time || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        description: text.length > 100 ? `${text.slice(0, 97)}...` : text,
+        priority: "Medium",
+      });
+    }
   }
 
+  return {
+    importantCount: totalImportant,
+    priorityCount: Math.min(priorityItems.length, 5),
+    followUpsCount: Math.max(0, Math.floor(totalImportant / 3)),
+    briefItems: briefItems.slice(0, 5),
+    priorityItems: priorityItems.slice(0, 5),
+  };
+}
+
+export async function generateDashboardBrief(userId: string, connectedPlatforms: string[]): Promise<DashboardBriefData | null> {
   try {
-    // 1. Gather context from connected platforms
-    const rawContext: Record<string, unknown> = {};
-    
-    // Attempt to fetch some real or mock data based on connected platforms
-    if (connectedPlatforms.includes("gmail")) {
-      const res = await executeMCPAction(userId, "gmail", "gmail_search_emails", { query: "is:unread", limit: 3 });
-      rawContext.gmail = res.status === "success" ? res.result : "Failed to fetch or no recent emails.";
+    const platformData: Record<string, { items: Record<string, unknown>[]; error?: string }> = {};
+    const activePlatforms = connectedPlatforms.filter(p => ALL_PROVIDERS.includes(p as any));
+
+    for (const platform of activePlatforms) {
+      platformData[platform] = await fetchPlatformData(userId, platform);
     }
 
-    if (connectedPlatforms.includes("whatsapp")) {
-      const res = await executeMCPAction(userId, "whatsapp", "whatsapp_fetch_messages", { limit: 3 });
-      rawContext.whatsapp = res.status === "success" ? res.result : "No new messages in WhatsApp.";
+    if (Object.values(platformData).every(d => d.items.length === 0)) {
+      return {
+        importantCount: 0,
+        priorityCount: 0,
+        followUpsCount: 0,
+        briefItems: [],
+        priorityItems: [],
+      };
     }
 
-    if (connectedPlatforms.includes("slack")) {
-      rawContext.slack = [
-        { from: "Team #general", message: "Deploying the new changes to staging..." },
-        { from: "Alice", message: "Can you review my PR when you have a moment?" }
-      ];
-    }
-    
-    if (connectedPlatforms.includes("telegram")) {
-      rawContext.telegram = [
-        { from: "Alerts Bot", message: "Server usage spike at 9:00 AM." }
-      ];
-    }
-
-    // 2. Separate data from instructions
-    const systemPrompt = `Based on data from the user's connected platforms: ${connectedPlatforms.join(", ")}. If data is missing or empty, invent realistic placeholder summaries for those platforms.
-
-Output JSON:
+    const hasAiKey = !!process.env.OPENROUTER_API_KEY;
+    if (hasAiKey) {
+      try {
+        const systemPrompt = `Based on data from ${activePlatforms.join(", ")}. Summarize each platform's items concisely. Output JSON:
 {
   "importantCount": (number),
   "priorityCount": (number),
   "followUpsCount": (number),
-  "briefItems": [
-    { "platform": ("gmail"|"whatsapp"|"slack"|"telegram"|"outlook"), "text": (string) }
-  ],
-  "priorityItems": [
-    { "platform": (string), "title": (string), "time": (string, e.g. "10:30 AM"), "description": (string), "priority": "High"|"Medium"|"Low" }
-  ]
+  "briefItems": [{"platform": "gmail|slack|whatsapp|telegram|discord|linkedin|github", "text": "summary string"}],
+  "priorityItems": [{"platform": "gmail|slack|whatsapp|telegram|discord|linkedin|github", "title": "short title", "time": "time string", "description": "brief description", "priority": "High|Medium|Low"}]
 }`;
-
-    const parsed = await generateJsonResponse<DashboardBriefData>(systemPrompt, rawContext);
-
-    if (parsed) {
-      return parsed;
+        const parsed = await generateJsonResponse<DashboardBriefData>(systemPrompt, platformData as any);
+        if (parsed) return parsed;
+      } catch {
+      }
     }
-    
-    return getMockDashboardData();
+
+    return buildBriefFromData(platformData);
   } catch (error) {
     console.error("Error generating dashboard brief:", error);
-    return getMockDashboardData();
+    return null;
   }
-}
-
-function getMockDashboardData(): DashboardBriefData {
-  return {
-    importantCount: 12,
-    priorityCount: 3,
-    followUpsCount: 5,
-    briefItems: [
-      { platform: "gmail", text: "You have 4 new emails from the marketing team regarding the Q3 campaign." },
-      { platform: "slack", text: "Alice requested a review on the new feature PR in #engineering." },
-      { platform: "whatsapp", text: "Client message from Acme Corp waiting for a reply." }
-    ],
-    priorityItems: [
-      {
-        platform: "slack",
-        title: "Review Feature PR",
-        time: "1h ago",
-        description: "Alice needs a code review before deploying to staging.",
-        priority: "High"
-      },
-      {
-        platform: "gmail",
-        title: "Approve Q3 Budget",
-        time: "3h ago",
-        description: "Finance department needs final approval on the campaign budget.",
-        priority: "High"
-      },
-      {
-        platform: "whatsapp",
-        title: "Reply to Acme Corp",
-        time: "4h ago",
-        description: "They asked about the timeline for the new deliverables.",
-        priority: "Medium"
-      }
-    ]
-  };
 }

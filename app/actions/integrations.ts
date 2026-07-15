@@ -1,6 +1,9 @@
 "use server";
 
 import { IntegrationRegistry } from "@/lib/integrations";
+import { DiscordProvider } from "@/lib/integrations/discord-provider";
+import { DiscordService } from "@/lib/discord/discord-service";
+import { TelegramService } from "@/lib/telegram/telegram-service";
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
 import { createAdminDb } from "@/lib/db";
 
@@ -158,6 +161,95 @@ export async function checkGoogleApiConfig() {
   const isIdSet = !!process.env.GOOGLE_CLIENT_ID;
   const isSecretSet = !!process.env.GOOGLE_CLIENT_SECRET;
   return isIdSet && isSecretSet;
+}
+
+// ── TELEGRAM SPECIFIC WRAPPERS ──
+
+export async function connectTelegramAction(userId: string, botToken: string) {
+  try {
+    const provider = IntegrationRegistry.get("telegram");
+    if (!provider) return { success: false, error: "Telegram provider not registered." };
+    const botInfo = await provider.getProfile(botToken);
+    await saveConnection(userId, "telegram", botInfo.email, botToken, undefined, 86400 * 365);
+
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+      if (baseUrl.startsWith("http://localhost")) {
+        console.log("[Telegram] Dev mode — webhook skipped, using long polling");
+      } else {
+        const webhookUrl = `${baseUrl}/api/telegram-webhook?userId=${userId}`;
+        await TelegramService.setWebhook(botToken, webhookUrl);
+      }
+    } catch {
+      console.warn("[Telegram] Webhook setup failed");
+    }
+
+    return { success: true, username: botInfo.email };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to connect Telegram.";
+    return { success: false, error: msg };
+  }
+}
+
+export async function disconnectTelegramWebhookAction(userId: string) {
+  try {
+    const repo = getRepo();
+    const record = await repo.findByUserAndProvider(userId, "telegram");
+    if (!record) return { success: true };
+    const token = repo.decryptToken(record.encrypted_access_token);
+    if (token) {
+      try {
+        await TelegramService.deleteWebhook(token);
+      } catch {}
+    }
+    return { success: true };
+  } catch {
+    return { success: true };
+  }
+}
+
+// ── DISCORD SPECIFIC WRAPPERS ──
+
+export async function connectDiscordAction(userId: string) {
+  try {
+    const provider = IntegrationRegistry.get("discord") as DiscordProvider | undefined;
+    if (!provider) return { success: false, error: "Discord provider not registered." };
+
+    const botToken = provider.getBotToken();
+    const botInfo = await provider.getProfile(botToken);
+    const guilds = await DiscordService.getGuilds(botToken);
+    if (!guilds.length) {
+      return { success: false, error: "Bot hasn't been added to any Discord server yet. Use the invite link first.", inviteUrl: provider.getInviteUrl() };
+    }
+
+    await saveConnection(userId, "discord", botInfo.email, botToken, undefined, 86400 * 365);
+    return { success: true, username: botInfo.email, guildCount: guilds.length };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to connect Discord.";
+    return { success: false, error: msg };
+  }
+}
+
+export async function getDiscordInviteUrlAction() {
+  const provider = IntegrationRegistry.get("discord") as DiscordProvider | undefined;
+  if (!provider) return null;
+  try {
+    return provider.getInviteUrl();
+  } catch {
+    return null;
+  }
+}
+
+// ── LINKEDIN SPECIFIC WRAPPERS ──
+
+export async function disconnectLinkedinAction(userId: string) {
+  return disconnectConnection(userId, "linkedin");
+}
+
+// ── GITHUB SPECIFIC WRAPPERS ──
+
+export async function disconnectGithubAction(userId: string) {
+  return disconnectConnection(userId, "github");
 }
 
 // Dynamically retrieve exposed MCP capabilities from the provider registry

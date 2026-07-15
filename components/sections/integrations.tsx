@@ -17,7 +17,7 @@ export function Integrations() {
     { name: "Slack", icon: "/slack.png", color: "border-accent-pink bg-accent-pink/10 text-accent-pink", desc: "Thread summarization, task creation, follow-up flags." },
     { name: "WhatsApp", icon: "/whatsapp.png", color: "border-accent-green bg-accent-green/10 text-accent-green", desc: "Summarize voice notes, reply suggestions, client notification hub." },
     { name: "Telegram", icon: "/telegram.png", color: "border-accent-cyan bg-accent-cyan/10 text-accent-cyan", desc: "Group chat indexing, topic highlights, project management." },
-    { name: "Outlook", icon: "/email.png", color: "border-primary bg-primary/10 text-primary", desc: "Calendar synchronization, email reminders, inbox cleaning." },
+    { name: "GitHub", icon: "/github.svg", color: "border-secondary bg-secondary/10 text-secondary", desc: "Issue tracking, PR review, CI/CD status, code commit monitoring." },
     { name: "Discord", icon: "/discord.png", color: "border-accent-purple bg-accent-purple/10 text-accent-purple", desc: "Support ticketing, community summaries, alert filters." },
   ];
 

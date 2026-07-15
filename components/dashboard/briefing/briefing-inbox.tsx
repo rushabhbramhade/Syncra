@@ -27,7 +27,7 @@ const TABS = ["unread", "completed", "archived", "snoozed"] as const;
 
 function getAppIcon(platform: string, className = "w-4 h-4") {
   const plat = platform.toLowerCase();
-  if (plat === "gmail" || plat === "outlook") return <Mail className={className} />;
+  if (plat === "gmail") return <Mail className={className} />;
   if (plat === "slack" || plat === "whatsapp" || plat === "telegram" || plat === "discord") {
     return <MessageCircle className={className} />;
   }

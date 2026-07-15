@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
 
     const tools: any[] = [];
     for (const [providerId, providerTools] of Object.entries(PLATFORM_MCP_TOOLS)) {
-      const isSandbox = ["slack", "outlook", "discord", "telegram", "linkedin", "github"].includes(providerId);
+      const isSandbox = ["slack", "discord"].includes(providerId);
       const isConnected = activeProviders.has(providerId);
 
       if (isConnected || isSandbox) {
@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
         return { success: true, output: JSON.stringify(result.result) };
       }
 
-      const sandboxProviders = ["slack", "outlook", "discord", "telegram", "linkedin", "github"];
+      const sandboxProviders = ["slack", "discord", "linkedin", "github"];
       if (sandboxProviders.includes(providerId)) {
         console.log(`[Sandbox Simulation] Executed sandbox tool ${toolName} with args:`, args);
         let mockResult: any = { message: `Simulated successful execution of ${toolName}` };

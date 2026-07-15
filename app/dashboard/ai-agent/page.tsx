@@ -768,7 +768,7 @@ export default function AIAgentPage() {
                 </button>
 
                 <button
-                  onClick={() => setInputVal("Help me drafts action items to Slack and Outlook.")}
+                  onClick={() => setInputVal("Help me draft action items to Slack and GitHub.")}
                   className="p-6 bg-surface-white rounded-2xl border-2 border-border-mist hover:border-primary/45 dark:hover:border-primary/30 shadow-md hover:shadow-lg transition-all duration-300 ease-out text-left cursor-pointer hover:-translate-y-1 active:translate-y-0"
                 >
                   <Compass className="w-6 h-6 text-accent-purple mb-3" />

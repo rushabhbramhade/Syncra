@@ -148,6 +148,20 @@ export const PLATFORM_MCP_TOOLS: Record<string, MCPTool[]> = {
   ],
   slack: [
     {
+      name: "slack_fetch_messages",
+      displayName: "Fetch Messages",
+      description: "Fetch recent messages from Slack channels the bot has access to.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max number of messages to fetch (default: 5)." },
+        },
+      },
+      arguments: [
+        { name: "limit", label: "Limit Results", type: "number", defaultValue: 5 },
+      ],
+    },
+    {
       name: "slack_post_message",
       displayName: "Post Message",
       description: "Post a message to a channel or direct message in the Slack workspace.",
@@ -311,42 +325,93 @@ export const PLATFORM_MCP_TOOLS: Record<string, MCPTool[]> = {
       ],
     },
   ],
-  outlook: [
+  discord: [
     {
-      name: "outlook_list_messages",
-      displayName: "List Messages",
-      description: "Retrieve a list of messages from Outlook inbox.",
+      name: "discord_fetch_recent_messages",
+      displayName: "Fetch Recent Messages",
+      description: "Discover all accessible Discord channels and fetch recent messages from each one.",
       inputSchema: {
         type: "object",
         properties: {
-          limit: { type: "number" },
+          limit: { type: "number", description: "Max messages per channel (default: 3)." },
+        },
+      },
+      arguments: [
+        { name: "limit", label: "Limit per Channel", type: "number", defaultValue: 3 },
+      ],
+    },
+    {
+      name: "discord_list_guilds",
+      displayName: "List Guilds",
+      description: "List all Discord servers (guilds) the bot is a member of.",
+      inputSchema: { type: "object", properties: {} },
+      arguments: [],
+    },
+    {
+      name: "discord_list_channels",
+      displayName: "List Channels",
+      description: "List text channels in a specific Discord guild.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          guildId: { type: "string", description: "The Discord guild/server ID." },
+        },
+        required: ["guildId"],
+      },
+      arguments: [
+        { name: "guildId", label: "Guild ID", type: "string", placeholder: "1029384756", required: true },
+      ],
+    },
+    {
+      name: "discord_fetch_messages",
+      displayName: "Fetch Messages",
+      description: "Fetch recent messages from a specific Discord channel.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          channelId: { type: "string", description: "The Discord channel ID." },
+          limit: { type: "number", description: "Max number of messages to fetch (default: 5, max: 100)." },
+        },
+        required: ["channelId"],
+      },
+      arguments: [
+        { name: "channelId", label: "Channel ID", type: "string", placeholder: "1029384756", required: true },
+        { name: "limit", label: "Limit Results", type: "number", defaultValue: 5 },
+      ],
+    },
+    {
+      name: "discord_send_message",
+      displayName: "Send Message",
+      description: "Send a text message to a specific Discord channel.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          channelId: { type: "string", description: "The Discord channel ID." },
+          content: { type: "string", description: "The message content to send." },
+        },
+        required: ["channelId", "content"],
+      },
+      arguments: [
+        { name: "channelId", label: "Channel ID", type: "string", placeholder: "1029384756", required: true },
+        { name: "content", label: "Content", type: "textarea", placeholder: "Sending alerts from Syncra!", required: true },
+      ],
+    },
+  ],
+  telegram: [
+    {
+      name: "telegram_fetch_messages",
+      displayName: "Fetch Messages",
+      description: "Fetch recent messages sent to the Telegram bot.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max number of messages to fetch (default: 5)." },
         },
       },
       arguments: [
         { name: "limit", label: "Limit Results", type: "number", defaultValue: 5 },
       ],
     },
-  ],
-  discord: [
-    {
-      name: "discord_post_message",
-      displayName: "Post Message",
-      description: "Post a text message to a specific Discord channel ID via Webhook.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          channelId: { type: "string" },
-          content: { type: "string" },
-        },
-        required: ["channelId", "content"],
-      },
-      arguments: [
-        { name: "channelId", label: "Discord Channel ID", type: "string", placeholder: "1029384756", required: true },
-        { name: "content", label: "Content", type: "textarea", placeholder: "Sending alerts from Syncra!", required: true },
-      ],
-    },
-  ],
-  telegram: [
     {
       name: "telegram_send_message",
       displayName: "Send Message",
@@ -365,20 +430,74 @@ export const PLATFORM_MCP_TOOLS: Record<string, MCPTool[]> = {
       ],
     },
   ],
-  linkedin: [
+  github: [
     {
-      name: "linkedin_post_update",
-      displayName: "Post Update",
-      description: "Share a text post or link update to your LinkedIn feed.",
+      name: "github_get_profile",
+      displayName: "Get Profile",
+      description: "Retrieve the authenticated GitHub user's profile (login, name, email, avatar, bio).",
+      inputSchema: { type: "object", properties: {} },
+      arguments: [],
+    },
+    {
+      name: "github_list_repos",
+      displayName: "List Repositories",
+      description: "List repositories for the authenticated user, sorted by most recently updated.",
+      inputSchema: { type: "object", properties: {} },
+      arguments: [],
+    },
+    {
+      name: "github_list_issues",
+      displayName: "List Issues",
+      description: "List all open issues across repositories for the authenticated user.",
+      inputSchema: { type: "object", properties: {} },
+      arguments: [],
+    },
+    {
+      name: "github_search_issues",
+      displayName: "Search Issues",
+      description: "Search for issues and pull requests by query (supports GitHub search syntax). Note: search API has its own rate limit (~30 req/min).",
       inputSchema: {
         type: "object",
         properties: {
-          text: { type: "string" },
+          query: { type: "string", description: "GitHub search query (e.g. is:open is:issue label:bug)." },
+        },
+        required: ["query"],
+      },
+      arguments: [
+        { name: "query", label: "Search Query", type: "string", placeholder: "is:open is:issue label:bug", required: true },
+      ],
+    },
+    {
+      name: "github_get_notifications",
+      displayName: "Get Notifications",
+      description: "Retrieve unread notifications for the authenticated user (PR reviews, issue mentions, etc.).",
+      inputSchema: { type: "object", properties: {} },
+      arguments: [],
+    },
+  ],
+  linkedin: [
+    {
+      name: "linkedin_get_profile",
+      displayName: "Get Profile",
+      description: "Retrieve the connected LinkedIn user's profile data (name, headline, photo, email).",
+      inputSchema: { type: "object", properties: {} },
+      arguments: [],
+    },
+    {
+      name: "linkedin_post_update",
+      displayName: "Post Update",
+      description: "Share a text post to the connected user's LinkedIn feed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          text: { type: "string", description: "The post content." },
+          visibility: { type: "string", description: "PUBLIC or CONNECTIONS (default: PUBLIC)." },
         },
         required: ["text"],
       },
       arguments: [
-        { name: "text", label: "Post Update", type: "textarea", placeholder: "Proud to announce the integration of MCP in Syncra!", required: true },
+        { name: "text", label: "Post Content", type: "textarea", placeholder: "Excited to share what we're building at Syncra!", required: true },
+        { name: "visibility", label: "Visibility", type: "string", defaultValue: "PUBLIC" },
       ],
     },
   ],
