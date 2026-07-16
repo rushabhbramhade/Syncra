@@ -37,9 +37,16 @@ function getAppIcon(platform: string, className = "w-4 h-4") {
 function getPlatformClass(platform: string) {
   const plat = platform.toLowerCase();
   if (plat === "gmail") return "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20";
-  if (plat === "whatsapp") return "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20";
+  if (plat === "outlook") return "bg-blue-600/10 text-blue-700 dark:text-blue-400 border-blue-600/20";
   if (plat === "slack") return "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20";
+  if (plat === "whatsapp") return "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20";
   if (plat === "telegram") return "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20";
+  if (plat === "discord") return "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20";
+  if (plat === "github") return "bg-gray-500/10 text-gray-700 border-gray-500/20";
+  if (plat === "linkedin") return "bg-blue-500/10 text-blue-600 border-blue-500/20";
+  if (plat === "calendar") return "bg-emerald-500/10 text-emerald-600 border-emerald-500/20";
+  if (plat === "notion") return "bg-stone-500/10 text-stone-600 border-stone-500/20";
+  if (plat === "linear") return "bg-rose-500/10 text-rose-600 border-rose-500/20";
   return "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20";
 }
 

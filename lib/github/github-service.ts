@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "@/lib/api-retry";
+
 const GITHUB_API_BASE = "https://api.github.com";
 const GITHUB_OAUTH_BASE = "https://github.com/login/oauth";
 const API_VERSION = "2022-11-28";
@@ -34,7 +36,7 @@ async function fetchAllPages(url: string, token: string, perPage: number = 100):
   const allResults: unknown[] = [];
 
   while (currentUrl) {
-    const res = await fetch(currentUrl, { headers: apiHeaders(token) });
+    const res = await fetchWithRetry(currentUrl, { headers: apiHeaders(token) });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(`GitHub API error: ${err.message || res.statusText}`);
@@ -51,7 +53,7 @@ async function fetchAllPages(url: string, token: string, perPage: number = 100):
 
 export class GitHubService {
   static async getProfile(token: string): Promise<Record<string, unknown>> {
-    const res = await fetch(`${GITHUB_API_BASE}/user`, { headers: apiHeaders(token) });
+    const res = await fetchWithRetry(`${GITHUB_API_BASE}/user`, { headers: apiHeaders(token) });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(`GitHub profile fetch failed: ${err.message || res.statusText}`);
@@ -75,7 +77,7 @@ export class GitHubService {
       await new Promise(r => setTimeout(r, waitMs));
     }
 
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `${GITHUB_API_BASE}/search/issues?q=${encodeURIComponent(query)}&per_page=30`,
       { headers: apiHeaders(token) }
     );
@@ -99,7 +101,7 @@ export class GitHubService {
   }
 
   static async commentOnIssue(token: string, repo: string, issueNumber: number, body: string): Promise<unknown> {
-    const res = await fetch(`${GITHUB_API_BASE}/repos/${repo}/issues/${issueNumber}/comments`, {
+    const res = await fetchWithRetry(`${GITHUB_API_BASE}/repos/${repo}/issues/${issueNumber}/comments`, {
       method: "POST",
       headers: { ...apiHeaders(token), "Content-Type": "application/json" },
       body: JSON.stringify({ body }),
@@ -115,7 +117,7 @@ export class GitHubService {
     accessToken: string;
     scope: string;
   }> {
-    const res = await fetch(`${GITHUB_OAUTH_BASE}/access_token`, {
+    const res = await fetchWithRetry(`${GITHUB_OAUTH_BASE}/access_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
@@ -130,11 +132,11 @@ export class GitHubService {
     return { accessToken: data.access_token, scope: data.scope };
   }
 
-  static async revokeToken(clientId: string, token: string): Promise<void> {
-    await fetch(`${GITHUB_API_BASE}/applications/${clientId}/token`, {
+  static async revokeToken(clientId: string, clientSecret: string, token: string): Promise<void> {
+    await fetchWithRetry(`${GITHUB_API_BASE}/applications/${clientId}/token`, {
       method: "DELETE",
       headers: {
-        Authorization: `Basic ${Buffer.from(`${clientId}:`).toString("base64")}`,
+        Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
         Accept: "application/vnd.github+json",
       },
       body: JSON.stringify({ access_token: token }),

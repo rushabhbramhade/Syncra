@@ -106,6 +106,28 @@ export class IntegrationsRepository {
     return { success: true };
   }
 
+  async findAllByUser(userId: string): Promise<IntegrationRecord[]> {
+    const { data, error } = await this.db.database
+      .from("user_integrations")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("status", "active");
+    if (error || !data) return [];
+    return data as IntegrationRecord[];
+  }
+
+  async findByUserAndProviderAndAccount(userId: string, provider: string, accountId: string): Promise<IntegrationRecord | null> {
+    const { data, error } = await this.db.database
+      .from("user_integrations")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("provider", provider)
+      .eq("provider_account_id", accountId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as IntegrationRecord;
+  }
+
   async updateLastSync(userId: string, provider: string) {
     try {
       await this.db.database

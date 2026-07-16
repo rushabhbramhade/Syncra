@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "@/lib/api-retry";
+
 const LINKEDIN_API_BASE = "https://api.linkedin.com";
 const LINKEDIN_OAUTH_BASE = "https://www.linkedin.com/oauth/v2";
 
@@ -12,7 +14,7 @@ export interface LinkedInProfile {
 
 export class LinkedInService {
   static async getProfile(accessToken: string): Promise<LinkedInProfile> {
-    const res = await fetch(`${LINKEDIN_API_BASE}/v2/userinfo`, {
+    const res = await fetchWithRetry(`${LINKEDIN_API_BASE}/v2/userinfo`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) {
@@ -29,7 +31,7 @@ export class LinkedInService {
 
   static async postUpdate(accessToken: string, text: string, visibility: "PUBLIC" | "CONNECTIONS" = "PUBLIC"): Promise<unknown> {
     const author = await this.getPersonUrn(accessToken);
-    const res = await fetch(`${LINKEDIN_API_BASE}/rest/posts`, {
+    const res = await fetchWithRetry(`${LINKEDIN_API_BASE}/rest/posts`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -71,7 +73,7 @@ export class LinkedInService {
       client_secret: clientSecret,
       redirect_uri: redirectUri,
     });
-    const res = await fetch(`${LINKEDIN_OAUTH_BASE}/accessToken`, {
+    const res = await fetchWithRetry(`${LINKEDIN_OAUTH_BASE}/accessToken`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
@@ -101,7 +103,7 @@ export class LinkedInService {
       client_id: clientId,
       client_secret: clientSecret,
     });
-    const res = await fetch(`${LINKEDIN_OAUTH_BASE}/accessToken`, {
+    const res = await fetchWithRetry(`${LINKEDIN_OAUTH_BASE}/accessToken`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
@@ -118,9 +120,9 @@ export class LinkedInService {
     };
   }
 
-  static async revokeToken(token: string): Promise<void> {
-    const params = new URLSearchParams({ token });
-    await fetch(`${LINKEDIN_OAUTH_BASE}/revoke`, {
+  static async revokeToken(token: string, clientId: string, clientSecret: string): Promise<void> {
+    const params = new URLSearchParams({ token, client_id: clientId, client_secret: clientSecret });
+    await fetchWithRetry(`${LINKEDIN_OAUTH_BASE}/revoke`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),

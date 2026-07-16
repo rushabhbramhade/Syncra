@@ -6,6 +6,7 @@ import { AIChatRepository } from "@/lib/repositories/ai-chat-repository";
 import { generateStreamingCompletion } from "@/lib/ai-service";
 import { PLATFORM_MCP_TOOLS } from "@/constants/mcp-tools";
 import { executeMCPAction } from "@/app/actions/integrations";
+import { checkRateLimit, getRateLimitHeaders } from "@/lib/rate-limiter";
 
 // Allow long execution time for route (for recursive agent runs)
 export const maxDuration = 300;
@@ -32,7 +33,19 @@ export async function POST(req: NextRequest) {
     }
     const userId = userRecord.id;
 
-    // 2. Parse request body
+    // 2a. Rate limit check
+    const rateLimitCheck = await checkRateLimit(userData.user.id, "ai-agent", userData.user.tier || "free");
+    if (!rateLimitCheck.allowed) {
+      return new Response(JSON.stringify({
+        error: "Rate limit exceeded. Please wait before sending another message.",
+        retryAfter: rateLimitCheck.retryAfterMs,
+      }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", ...getRateLimitHeaders(rateLimitCheck) },
+      });
+    }
+
+    // 2b. Parse request body
     const { conversationId, content, model, files } = await req.json();
     if (!content) {
       return new Response(JSON.stringify({ error: "Content is required" }), {
@@ -99,25 +112,22 @@ export async function POST(req: NextRequest) {
 
     const tools: any[] = [];
     for (const [providerId, providerTools] of Object.entries(PLATFORM_MCP_TOOLS)) {
-      const isSandbox = ["slack", "discord"].includes(providerId);
-      const isConnected = activeProviders.has(providerId);
+      if (!activeProviders.has(providerId)) continue;
 
-      if (isConnected || isSandbox) {
-        providerTools.forEach((tool: any) => {
-          tools.push({
-            type: "function",
-            function: {
-              name: tool.name,
-              description: tool.description,
-              parameters: {
-                type: "object",
-                properties: tool.inputSchema.properties,
-                required: tool.inputSchema.required || [],
-              },
+      providerTools.forEach((tool: any) => {
+        tools.push({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: {
+              type: "object",
+              properties: tool.inputSchema.properties,
+              required: tool.inputSchema.required || [],
             },
-          });
+          },
         });
-      }
+      });
     }
 
     // 6. Define tool dispatcher
@@ -127,20 +137,6 @@ export async function POST(req: NextRequest) {
 
       if (result.status === "success") {
         return { success: true, output: JSON.stringify(result.result) };
-      }
-
-      const sandboxProviders = ["slack", "discord", "linkedin", "github"];
-      if (sandboxProviders.includes(providerId)) {
-        console.log(`[Sandbox Simulation] Executed sandbox tool ${toolName} with args:`, args);
-        let mockResult: any = { message: `Simulated successful execution of ${toolName}` };
-        if (toolName.includes("search") || toolName.includes("get") || toolName.includes("list")) {
-          mockResult = {
-            data: [],
-            message: `Simulated search/retrieve results for ${toolName}`,
-            count: 0,
-          };
-        }
-        return { success: true, output: JSON.stringify(mockResult) };
       }
 
       return { success: false, error: result.error?.message || "Execution failed" };

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveConnection } from "@/app/actions/integrations";
-import { verifyStateFull } from "@/lib/oauth-state";
+import { verifyStateFull, consumeState } from "@/lib/oauth-state";
 import { getCanonicalOrigin } from "@/lib/oauth";
 import { LinkedInService } from "@/lib/linkedin/linkedin-service";
 
@@ -54,6 +54,13 @@ export async function GET(request: NextRequest) {
       console.error(`${OAUTH_LOG_PREFIX} state verification failed`);
       return NextResponse.redirect(
         new URL("/dashboard/integrations?error=invalid_oauth_state", request.url)
+      );
+    }
+
+    if (!consumeState(state)) {
+      console.error(`${OAUTH_LOG_PREFIX} state already consumed (replay attack detected)`);
+      return NextResponse.redirect(
+        new URL("/dashboard/integrations?error=oauth_state_reused", request.url)
       );
     }
 

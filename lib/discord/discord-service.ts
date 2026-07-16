@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "@/lib/api-retry";
+
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 
 export interface DiscordBotInfo {
@@ -9,7 +11,7 @@ export interface DiscordBotInfo {
 
 export class DiscordService {
   static async validateToken(token: string): Promise<DiscordBotInfo> {
-    const res = await fetch(`${DISCORD_API_BASE}/users/@me`, {
+    const res = await fetchWithRetry(`${DISCORD_API_BASE}/users/@me`, {
       headers: { Authorization: `Bot ${token}` },
     });
     if (!res.ok) {
@@ -26,7 +28,7 @@ export class DiscordService {
   }
 
   static async getGuilds(token: string): Promise<unknown[]> {
-    const res = await fetch(`${DISCORD_API_BASE}/users/@me/guilds`, {
+    const res = await fetchWithRetry(`${DISCORD_API_BASE}/users/@me/guilds`, {
       headers: { Authorization: `Bot ${token}` },
     });
     if (!res.ok) throw new Error(`Failed to fetch guilds: ${res.statusText}`);
@@ -34,7 +36,7 @@ export class DiscordService {
   }
 
   static async listChannels(token: string, guildId: string): Promise<unknown[]> {
-    const res = await fetch(`${DISCORD_API_BASE}/guilds/${guildId}/channels`, {
+    const res = await fetchWithRetry(`${DISCORD_API_BASE}/guilds/${guildId}/channels`, {
       headers: { Authorization: `Bot ${token}` },
     });
     if (!res.ok) throw new Error(`Failed to fetch channels: ${res.statusText}`);
@@ -43,7 +45,7 @@ export class DiscordService {
   }
 
   static async sendMessage(token: string, channelId: string, content: string): Promise<unknown> {
-    const res = await fetch(`${DISCORD_API_BASE}/channels/${channelId}/messages`, {
+    const res = await fetchWithRetry(`${DISCORD_API_BASE}/channels/${channelId}/messages`, {
       method: "POST",
       headers: {
         Authorization: `Bot ${token}`,
@@ -59,7 +61,7 @@ export class DiscordService {
   }
 
   static async fetchMessages(token: string, channelId: string, limit: number = 5): Promise<unknown[]> {
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `${DISCORD_API_BASE}/channels/${channelId}/messages?limit=${Math.min(limit, 100)}`,
       { headers: { Authorization: `Bot ${token}` } }
     );

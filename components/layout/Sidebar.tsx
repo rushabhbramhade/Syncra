@@ -129,7 +129,6 @@ function NavItem({
           "
         >
           {item.label}
-          <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-secondary" />
         </div>
       )}
     </Link>
@@ -143,12 +142,11 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     <aside
       className={`
         relative flex flex-col h-screen bg-surface-white
-        border-r-[2.5px] border-secondary
         transition-all duration-300 ease-in-out
         ${collapsed ? "w-[84px]" : "w-[260px]"}
         flex-shrink-0 z-30
       `}
-      style={{ boxShadow: "4px 0 0 rgba(15,23,42,0.06)" }}
+      style={{ boxShadow: "0 0 0 1px rgba(15,23,42,0.06)" }}
     >
       {/* ── Logo & App Name ── */}
       <div

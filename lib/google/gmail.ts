@@ -1,4 +1,5 @@
 import { getRedirectUri, getGoogleConfig } from "@/lib/oauth";
+import { fetchWithRetry } from "@/lib/api-retry";
 
 const OAUTH_LOG_PREFIX = "[GmailOAuth]";
 
@@ -231,13 +232,9 @@ export class GmailService {
     limit = 10
   ): Promise<GmailEmailSummary[]> {
     const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${limit}`;
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-
-    if (!response.ok) {
-      throw new Error(`Failed to list messages from Gmail: ${response.statusText}`);
-    }
 
     const data = await response.json();
     if (!data.messages || data.messages.length === 0) {
@@ -301,7 +298,7 @@ export class GmailService {
   // MCP actions: Get Email details
   public static async getEmail(accessToken: string, messageId: string): Promise<GmailEmailDetail> {
     const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`;
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
@@ -381,6 +378,35 @@ export class GmailService {
     return {
       status: "success",
       messageId: data.id,
+    };
+  }
+
+  // Fetch a thread to get email headers from the first message
+  public static async getThreadHeaders(
+    accessToken: string,
+    threadId: string
+  ): Promise<{ from: string; to: string; subject: string } | null> {
+    const url = `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const firstMsg = data.messages?.[0];
+    if (!firstMsg) return null;
+
+    const headers = firstMsg.payload?.headers || [];
+    const getH = (name: string) => {
+      const h = headers.find((h: { name: string; value: string }) => h.name.toLowerCase() === name.toLowerCase());
+      return h ? h.value : "";
+    };
+
+    return {
+      from: getH("From"),
+      to: getH("To"),
+      subject: getH("Subject"),
     };
   }
 

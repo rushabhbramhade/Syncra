@@ -4,6 +4,7 @@ import { IntegrationsRepository } from "@/lib/repositories/integrations-reposito
 import { executeMCPAction } from "@/app/actions/integrations";
 import { generateJsonResponse } from "@/lib/ai-service";
 import { publishEvent } from "@/lib/notifications/events";
+import { BRIEFING_CATEGORIES } from "@/lib/constants/briefing-categories";
 
 export interface AIResponseBriefing {
   title: string;
@@ -18,6 +19,7 @@ export interface AIResponseBriefing {
     messages?: { summary: string; items: Array<{ platform: string; sender: string; text: string; channel?: string }> };
     tasks?: { summary: string; items: Array<{ title: string; dueDate?: string; status: string; suggestion?: string }> };
     followUps?: { summary: string; items: Array<{ title: string; recommendedAction: string; dueDate?: string }> };
+    activity?: { summary: string; items: Array<{ platform: string; type: string; title: string; url?: string }> };
   };
   recommendations: Array<{ text: string; type: string; platform?: string; sourceId?: string }>;
   items: Array<{
@@ -28,7 +30,48 @@ export interface AIResponseBriefing {
     shortSummary: string;
     originalContent: string;
     sourceId?: string;
+    correlationKey?: string;
+    from?: string;
+    to?: string;
   }>;
+}
+
+function detectCorrelations(items: Array<{ platform: string; title: string; shortSummary: string; sourceId?: string; correlationKey?: string }>): Array<{ fromIndex: number; toIndex: number; text: string }> {
+  const correlations: Array<{ fromIndex: number; toIndex: number; text: string }> = [];
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      if (items[i].platform === items[j].platform) continue;
+      const wordsI = new Set((items[i].shortSummary + " " + items[i].title).toLowerCase().split(/\s+/).filter(w => w.length > 4));
+      const wordsJ = new Set((items[j].shortSummary + " " + items[j].title).toLowerCase().split(/\s+/).filter(w => w.length > 4));
+      const overlap = [...wordsI].filter(w => wordsJ.has(w));
+      if (overlap.length >= 3) {
+        correlations.push({
+          fromIndex: i,
+          toIndex: j,
+          text: `Related: mentioned in ${items[j].platform}`,
+        });
+      }
+    }
+  }
+  return correlations;
+}
+
+function getCurrentDateInTz(tz: string): { year: number; month: number; day: number; hour: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric", month: "numeric", day: "numeric", hour: "numeric",
+    hour12: false,
+  }).formatToParts(new Date());
+  const p = (t: string) => parseInt(parts.find(x => x.type === t)?.value || "0", 10);
+  return { year: p("year"), month: p("month"), day: p("day"), hour: p("hour") };
+}
+
+/** Convert "YYYY-MM-DD HH:mm in timezone tz" to a UTC Date */
+function localTimeInTzToUtc(tz: string, year: number, month: number, day: number, hour: number): Date {
+  const now = new Date();
+  const tzNow = new Date(now.toLocaleString("en-US", { timeZone: tz }));
+  const offsetMs = now.getTime() - tzNow.getTime();
+  return new Date(Date.UTC(year, month - 1, day, hour, 0, 0) + offsetMs);
 }
 
 export function calculateNextRun(frequency: string, timezone = "UTC"): string {
@@ -39,20 +82,20 @@ export function calculateNextRun(frequency: string, timezone = "UTC"): string {
     case "hourly":
       return new Date(now.getTime() + 60 * 60000).toISOString();
     case "morning_brief": {
-      const next = new Date();
-      next.setHours(8, 0, 0, 0);
-      if (next.getTime() <= now.getTime()) {
-        next.setDate(next.getDate() + 1);
-      }
-      return next.toISOString();
+      const cur = getCurrentDateInTz(timezone);
+      const day = cur.hour >= 8 ? cur.day + 1 : cur.day;
+      const target = localTimeInTzToUtc(timezone, cur.year, cur.month, day, 8);
+      return target <= now
+        ? new Date(target.getTime() + 86400000).toISOString()
+        : target.toISOString();
     }
     case "evening_brief": {
-      const next = new Date();
-      next.setHours(18, 0, 0, 0);
-      if (next.getTime() <= now.getTime()) {
-        next.setDate(next.getDate() + 1);
-      }
-      return next.toISOString();
+      const cur = getCurrentDateInTz(timezone);
+      const day = cur.hour >= 18 ? cur.day + 1 : cur.day;
+      const target = localTimeInTzToUtc(timezone, cur.year, cur.month, day, 18);
+      return target <= now
+        ? new Date(target.getTime() + 86400000).toISOString()
+        : target.toISOString();
     }
     case "daily":
       return new Date(now.getTime() + 24 * 60 * 60000).toISOString();
@@ -82,8 +125,8 @@ export class BriefingService {
     let schedule = null;
     let name = "Workspace Briefing";
     let goal = "General workspace update";
-    let selectedIntegrations = ["gmail", "whatsapp", "slack", "telegram"];
-    let selectedCategories = ["email", "meetings", "messages", "tasks", "follow-ups"];
+    let selectedIntegrations = ["gmail", "whatsapp", "slack", "telegram", "discord", "github", "linkedin", "calendar", "outlook", "notion", "linear"];
+    let selectedCategories: string[] = [...BRIEFING_CATEGORIES];
 
     if (scheduleId) {
       schedule = await repo.findScheduleById(scheduleId);
@@ -101,79 +144,59 @@ export class BriefingService {
 
     try {
       // 1. Load user's connected integrations
-      const connectionStatuses = await Promise.all(
+      const connectionResults = await Promise.allSettled(
         selectedIntegrations.map(async (provider) => {
           const status = await integrationsRepo.getConnectionStatus(userId, provider);
           return { provider, conn: status };
         })
       );
 
-      const activeIntegrations = connectionStatuses
-        .filter((c) => c.conn && c.conn.status === "active")
-        .map((c) => c.provider);
+      const activeIntegrations = connectionResults
+        .filter((r) => r.status === "fulfilled" && r.value.conn?.status === "active")
+        .map((r) => (r as PromiseFulfilledResult<{ provider: string; conn: any }>).value.provider);
 
-      // 2. Fetch platform data via MCP
+      // 2. Fetch platform data via MCP — all in parallel
       const rawContext: Record<string, unknown> = {};
 
-      if (activeIntegrations.includes("gmail") && selectedCategories.includes("email")) {
-        try {
-          const gmailRes = await executeMCPAction(userId, "gmail", "gmail_search_emails", { query: "is:unread", limit: 5 });
-          if (gmailRes.status === "success") {
-            rawContext.gmail = gmailRes.result;
-          }
-        } catch (e) {
-          console.warn("Gmail MCP action failed in briefing sync:", e);
-        }
-      }
+      const platformTasks = [
+        { provider: "gmail", action: "gmail_search_emails", params: { query: "is:unread", limit: 5 } as Record<string, unknown>, categoryFilter: "email" },
+        { provider: "whatsapp", action: "whatsapp_fetch_messages", params: { limit: 5 }, categoryFilter: "messages" },
+        { provider: "slack", action: "slack_fetch_messages", params: { limit: 5 }, categoryFilter: "messages" },
+        { provider: "telegram", action: "telegram_fetch_messages", params: { limit: 5 }, categoryFilter: "messages" },
+        { provider: "discord", action: "discord_fetch_recent_messages", params: { limit: 3 }, categoryFilter: "messages" },
+        { provider: "calendar", action: "calendar_list_events", params: { timeMin: new Date().toISOString(), maxResults: 10 }, categoryFilter: "meetings" },
+        { provider: "outlook", action: "outlook_search_emails", params: { query: "is:unread", limit: 5 }, categoryFilter: "email" },
+        { provider: "notion", action: "notion_search", params: { query: "", limit: 5 } },
+        { provider: "linear", action: "linear_list_issues", params: { limit: 5 } },
+        { provider: "linkedin", action: "linkedin_get_profile", params: {} },
+      ];
 
-      if (activeIntegrations.includes("whatsapp") && selectedCategories.includes("messages")) {
-        try {
-          const whatsappRes = await executeMCPAction(userId, "whatsapp", "whatsapp_fetch_messages", { limit: 5 });
-          if (whatsappRes.status === "success") {
-            rawContext.whatsapp = whatsappRes.result;
-          }
-        } catch (e) {
-          console.warn("WhatsApp MCP action failed in briefing sync:", e);
-        }
-      }
+      const githubPromise = activeIntegrations.includes("github")
+        ? (async () => {
+            const [issues, notifications] = await Promise.allSettled([
+              executeMCPAction(userId, "github", "github_list_issues", {}),
+              executeMCPAction(userId, "github", "github_get_notifications", {}),
+            ]);
+            const githubData: Record<string, unknown> = {};
+            if (issues.status === "fulfilled" && issues.value.status === "success") githubData.issues = issues.value.result;
+            if (notifications.status === "fulfilled" && notifications.value.status === "success") githubData.notifications = notifications.value.result;
+            if (Object.keys(githubData).length > 0) rawContext.github = githubData;
+          })().catch(e => console.warn("GitHub MCP action failed in briefing sync:", e))
+        : Promise.resolve();
 
-      // Add high-fidelity fallback context for stub/mock platforms if connected
-      if (activeIntegrations.includes("slack") && selectedCategories.includes("messages")) {
-        rawContext.slack = [
-          { sender: "Alice", text: "Can you review my PR for the landing page today?", channel: "#engineering", timestamp: new Date(Date.now() - 3600000).toISOString() },
-          { sender: "Bob", text: "Acme Corp requested an update on the billing module timelines.", channel: "#sales-alerts", timestamp: new Date(Date.now() - 7200000).toISOString() }
-        ];
+      const mcpResults = await Promise.allSettled(
+        platformTasks
+          .filter(p => activeIntegrations.includes(p.provider) && (!p.categoryFilter || selectedCategories.includes(p.categoryFilter)))
+          .map(p => executeMCPAction(userId, p.provider, p.action, p.params).then(r => ({ provider: p.provider, result: r })))
+      );
+      for (const r of mcpResults) {
+        if (r.status === "rejected") continue;
+        const { provider, result } = r.value;
+        if (result.status !== "success" || !result.result) continue;
+        rawContext[provider] = provider === "linkedin" ? [result.result] : result.result;
       }
-
-      if (activeIntegrations.includes("telegram") && selectedCategories.includes("messages")) {
-        rawContext.telegram = [
-          { sender: "Production Alert Bot", text: "Memory utilization exceeded 85% on node-2.", timestamp: new Date(Date.now() - 1800000).toISOString() }
-        ];
-      }
-
-      if (activeIntegrations.includes("discord") && selectedCategories.includes("messages")) {
-        rawContext.discord = [
-          { sender: "Manager", text: "Weekly sync rescheduled to 3:00 PM today.", channel: "#announcements", timestamp: new Date(Date.now() - 4000000).toISOString() }
-        ];
-      }
-
-      // If no platforms are actually connected, provide fallback context to allow page preview
-      if (Object.keys(rawContext).length === 0) {
-        rawContext.gmail = [
-          { from: "Acme Corp <contact@acme.com>", subject: "Urgent: Project Syncra Agreement Signoff", snippet: "Please review and sign the attached agreement for Q3 design deliverables by tomorrow morning.", date: new Date(Date.now() - 10800000).toISOString(), id: "msg_acme_101" },
-          { from: "Google Workspace Team <workspace-noreply@google.com>", subject: "Security Audit Warning", snippet: "Review new logins detected on your administrator account from unrecognized devices.", date: new Date(Date.now() - 86400000).toISOString(), id: "msg_google_102" }
-        ];
-        rawContext.whatsapp = [
-          { fromName: "Dev Lead", message: "Staging deployment successfully completed! Check it out.", timestamp: new Date(Date.now() - 7200000).toISOString(), chatId: "dev_lead_jid" }
-        ];
-        rawContext.tasks = [
-          { title: "Review Q3 Marketing Campaign Budget", dueDate: new Date(Date.now() + 86400000).toISOString(), priority: "High", status: "pending" },
-          { title: "Renew SSL Certificates for staging.syncra.app", dueDate: new Date(Date.now() - 86400000).toISOString(), priority: "High", status: "overdue" }
-        ];
-        rawContext.calendar = [
-          { title: "Acme Deliverables Review Standup", startTime: new Date(Date.now() + 7200000).toISOString(), attendees: ["Alice", "Bob", "Client Rep"], location: "Google Meet", url: "https://meet.google.com/abc-defg-hij" }
-        ];
-      }
+      // GitHub runs in parallel with all other platform calls
+      await githubPromise;
 
       // 3. Prepare Prompt for central OpenRouter AI service
       const systemPrompt = `You are Syncra's central AI intelligence assistant.
@@ -216,32 +239,42 @@ The response must fit this exact JSON structure:
       "items": [
         { "title": "Brief topic", "recommendedAction": "Actionable task description", "dueDate": "ISO Date or null" }
       ]
+    },
+    "activity": {
+      "summary": "Summary of GitHub and LinkedIn activity (releases, PRs, feed updates, connection requests).",
+      "items": [
+        { "platform": "github" | "linkedin", "type": "release" | "star" | "pr_review" | "feed_update" | "connection_request", "title": "Activity title", "url": "URL or null" }
+      ]
     }
   },
   "recommendations": [
     {
       "text": "Actionable advice, e.g., 'Reply to Alice regarding PR review'",
       "type": "reply_email" | "prepare_meeting" | "finish_task" | "contact_client" | "schedule_follow_up",
-      "platform": "gmail" | "slack" | "whatsapp" | "telegram" | "discord" | "tasks" | "calendar",
+      "platform": "gmail" | "outlook" | "slack" | "whatsapp" | "telegram" | "discord" | "github" | "linkedin" | "calendar" | "notion" | "linear",
       "sourceId": "unique ID of source item if any, or null"
     }
   ],
   "items": [
     {
-      "platform": "gmail" | "slack" | "whatsapp" | "telegram" | "discord" | "tasks" | "calendar",
-      "category": "email" | "meetings" | "messages" | "tasks" | "follow-ups",
+      "platform": "gmail" | "outlook" | "slack" | "whatsapp" | "telegram" | "discord" | "github" | "linkedin" | "calendar" | "notion" | "linear",
+      "category": "${BRIEFING_CATEGORIES.join(" | ")}",
       "title": "Brief title summarizing this specific item",
       "priority": "high" | "normal" | "low",
       "shortSummary": "1-sentence AI summary of this item",
       "originalContent": "Full text or excerpt of original content",
-      "sourceId": "unique ID of source item if any, or null"
+      "sourceId": "unique ID of source item if any, or null",
+      "correlationKey": "optional key to group related items across platforms, e.g. project name or thread ID",
+      "from": "For gmail/outlook items: the sender name and email, e.g. 'Alice Johnson <alice@example.com>'. For other platforms omit or set to null.",
+      "to": "For gmail/outlook items: the recipient email address. For other platforms omit or set to null."
     }
   ]
 }
 
 Goal parameter of current briefing schedule: "${goal}".
 Integrations requested: ${selectedIntegrations.join(", ")}.
-Categories requested: ${selectedCategories.join(", ")}.`;
+Categories requested: ${selectedCategories.join(", ")}.
+For each platform, provide relevant data: gmail/outlook→emails, slack/whatsapp/telegram/discord→messages, github→issues/PRs/notifications, linkedin→profile/feed, calendar→events, notion→pages, linear→issues.`;
 
       // 4. Generate AI summary
       const aiResult = await generateJsonResponse<AIResponseBriefing>(systemPrompt, rawContext);
@@ -249,8 +282,8 @@ Categories requested: ${selectedCategories.join(", ")}.`;
         throw new Error("Central AI service returned null response.");
       }
 
-      // 5. Store generated briefing
-      const briefingRecord = await repo.createBriefing({
+      // 5. Store generated briefing (with FK fallback)
+      const createBriefingPayload = {
         user_id: userId,
         schedule_id: scheduleId,
         title: aiResult.title || name,
@@ -260,12 +293,23 @@ Categories requested: ${selectedCategories.join(", ")}.`;
         generated_at: new Date().toISOString(),
         ai_model: process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat-v3",
         status: "completed",
-      });
+      };
+      let briefingRecord;
+      try {
+        briefingRecord = await repo.createBriefing(createBriefingPayload);
+      } catch (fkErr: any) {
+        if (scheduleId && fkErr.message?.includes?.("schedule_id_fkey")) {
+          console.warn("[Briefing] schedule_id FK violation, retrying with null");
+          briefingRecord = await repo.createBriefing({ ...createBriefingPayload, schedule_id: null });
+        } else {
+          throw fkErr;
+        }
+      }
 
       const briefingId = briefingRecord.id!;
 
-      // 6. Store briefing items
-      await Promise.all(
+      // 6. Store briefing items with correlation data
+      const storedItems = await Promise.all(
         aiResult.items.map(async (item) => {
           return repo.createBriefingItem({
             briefing_id: briefingId,
@@ -276,6 +320,9 @@ Categories requested: ${selectedCategories.join(", ")}.`;
               title: item.title,
               shortSummary: item.shortSummary,
               originalContent: item.originalContent,
+              correlationKey: (item as any).correlationKey || null,
+              from: item.from || null,
+              to: item.to || null,
             },
             priority: item.priority || "normal",
             status: "unread",
@@ -285,6 +332,25 @@ Categories requested: ${selectedCategories.join(", ")}.`;
           });
         })
       );
+
+      // Detect cross-platform correlations and store in metadata
+      const correlations = detectCorrelations(aiResult.items);
+      for (const corr of correlations) {
+        const fromItem = storedItems[corr.fromIndex];
+        const toItem = storedItems[corr.toIndex];
+        if (fromItem?.id && toItem?.id) {
+          const fromMeta = (fromItem.metadata || {}) as Record<string, any>;
+          const toMeta = (toItem.metadata || {}) as Record<string, any>;
+          await repo.updateItemMetadata(fromItem.id, {
+            ...fromMeta,
+            correlation: { relatedItemId: toItem.id, text: corr.text, platform: aiResult.items[corr.toIndex].platform },
+          });
+          await repo.updateItemMetadata(toItem.id, {
+            ...toMeta,
+            correlation: { relatedItemId: fromItem.id, text: `Related: referenced in ${aiResult.items[corr.fromIndex].platform}`, platform: aiResult.items[corr.fromIndex].platform },
+          });
+        }
+      }
 
       // 7. Update schedule next run
       if (scheduleId && schedule) {
@@ -308,17 +374,28 @@ Categories requested: ${selectedCategories.join(", ")}.`;
         console.error("Failed to publish briefing notification event:", err);
       }
 
-      // 9. Store briefing history record
-      await repo.createHistory({
+      // 9. Store briefing history record (linked to the generated briefing)
+      const createHistoryPayload = {
         user_id: userId,
         schedule_id: scheduleId,
+        briefing_id: briefingId,
         execution_time: new Date().toISOString(),
         duration: Date.now() - startTime,
         status: "success",
         errors: null,
-        ai_tokens_used: 0, // openrouter does not report tokens directly, stub as 0 or estimated
+        ai_tokens_used: 0,
         trigger_source: triggerSource,
-      });
+      };
+      try {
+        await repo.createHistory(createHistoryPayload);
+      } catch (histErr: any) {
+        if (scheduleId && histErr.message?.includes?.("schedule_id_fkey")) {
+          console.warn("[BriefingHistory] schedule_id FK violation, retrying with null");
+          await repo.createHistory({ ...createHistoryPayload, schedule_id: null });
+        } else {
+          throw histErr;
+        }
+      }
 
       return { success: true, briefingId };
     } catch (error: any) {
@@ -327,7 +404,7 @@ Categories requested: ${selectedCategories.join(", ")}.`;
 
       // Store failed execution in history
       try {
-        await repo.createHistory({
+        const failHistoryPayload = {
           user_id: userId,
           schedule_id: scheduleId,
           execution_time: new Date().toISOString(),
@@ -336,7 +413,17 @@ Categories requested: ${selectedCategories.join(", ")}.`;
           errors: errorMsg,
           ai_tokens_used: 0,
           trigger_source: triggerSource,
-        });
+        };
+        try {
+          await repo.createHistory(failHistoryPayload);
+        } catch (histErr: any) {
+          if (scheduleId && histErr.message?.includes?.("schedule_id_fkey")) {
+            console.warn("[BriefingHistory] schedule_id FK violation on failure, retrying with null");
+            await repo.createHistory({ ...failHistoryPayload, schedule_id: null });
+          } else {
+            throw histErr;
+          }
+        }
       } catch (histErr) {
         console.error("Failed to write briefing failure history:", histErr);
       }

@@ -121,8 +121,6 @@ export default function IntegrationsPage() {
   const [linkedinStatus, setLinkedinStatus] = useState<ConnectionStatus | null>(null);
   const [githubStatus, setGithubStatus] = useState<ConnectionStatus | null>(null);
   
-  const [mockConnectedList, setMockConnectedList] = useState<string[]>([]);
-  
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settingsPlatform, setSettingsPlatform] = useState<Platform | null>(null);
   const [settingsTools, setSettingsTools] = useState<MCPTool[] | null>(null);
@@ -324,24 +322,11 @@ export default function IntegrationsPage() {
         if (errObj?.message === "DATA_FETCH_TIMEOUT") {
           console.warn("[Integrations] Page data fetch timed out, showing page without connection status.");
         } else {
-          console.error("[Integrations] Failed to load connection data:", dataErr);
+          console.warn("[Integrations] Failed to load connection data (page will show partial state):", dataErr);
         }
       }
 
       if (!isMounted.current) return;
-      const stored = localStorage.getItem("syncra-mock-connected-platforms");
-      if (stored) {
-        try {
-          setMockConnectedList(JSON.parse(stored));
-        } catch {
-          setMockConnectedList([]);
-          localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify([]));
-        }
-      } else {
-        setMockConnectedList([]);
-        localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify([]));
-      }
-
       const storedTools = localStorage.getItem("syncra-enabled-mcp-tools");
       if (storedTools) {
         try {
@@ -397,9 +382,6 @@ export default function IntegrationsPage() {
     } else if (success === "slack") {
       const timer = setTimeout(() => {
         setSuccessMessage("Slack connected successfully!");
-        const list = mockConnectedList.filter(id => id !== "slack");
-        setMockConnectedList(list);
-        localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(list));
         setSlackStatus({ connected: true, email: "", connectedAt: "", lastSyncAt: "", provider: "slack", status: "active" });
         router.replace("/dashboard/integrations");
       }, 0);
@@ -407,9 +389,6 @@ export default function IntegrationsPage() {
     } else if (success === "linkedin") {
       const timer = setTimeout(() => {
         setSuccessMessage("LinkedIn connected successfully!");
-        const list = mockConnectedList.filter(id => id !== "linkedin");
-        setMockConnectedList(list);
-        localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(list));
         setLinkedinStatus({ connected: true, email: "", connectedAt: "", lastSyncAt: "", provider: "linkedin", status: "active" });
         router.replace("/dashboard/integrations");
       }, 0);
@@ -417,9 +396,6 @@ export default function IntegrationsPage() {
     } else if (success === "github") {
       const timer = setTimeout(() => {
         setSuccessMessage("GitHub connected successfully!");
-        const list = mockConnectedList.filter(id => id !== "github");
-        setMockConnectedList(list);
-        localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(list));
         setGithubStatus({ connected: true, email: "", connectedAt: "", lastSyncAt: "", provider: "github", status: "active" });
         router.replace("/dashboard/integrations");
       }, 0);
@@ -459,20 +435,6 @@ export default function IntegrationsPage() {
     } finally {
       setIsDataLoading(false);
     }
-  };
-
-  const handleConnectMockPlatform = (platformId: string) => {
-    const list = [...mockConnectedList, platformId];
-    setMockConnectedList(list);
-    localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(list));
-    setSuccessMessage(`${PLATFORMS.find(p => p.id === platformId)?.name} connected successfully.`);
-  };
-
-  const handleDisconnectMockPlatform = (platformId: string) => {
-    const list = mockConnectedList.filter(id => id !== platformId);
-    setMockConnectedList(list);
-    localStorage.setItem("syncra-mock-connected-platforms", JSON.stringify(list));
-    setSuccessMessage(`${PLATFORMS.find(p => p.id === platformId)?.name} disconnected.`);
   };
 
   const handleSettingsClick = async (platform: Platform) => {
@@ -563,7 +525,7 @@ export default function IntegrationsPage() {
               <span>Google API Credentials Required</span>
             </div>
             <p className="text-[13px] text-text-ink font-semibold leading-relaxed max-w-2xl">
-              OAuth credentials are missing from your environment. Google integration will run in sandbox mode until client ID and client secret keys are configured in your <code className="font-mono text-xs bg-black/5 px-1.5 py-0.5 rounded border border-secondary/20">.env.local</code> file.
+              OAuth credentials are missing from your environment. Google integration will not work until client ID and client secret keys are configured in your <code className="font-mono text-xs bg-black/5 px-1.5 py-0.5 rounded border border-secondary/20">.env.local</code> file.
             </p>
           </div>
           <Button
@@ -612,7 +574,7 @@ export default function IntegrationsPage() {
                 ? !!linkedinStatus
                 : isGithub
                 ? !!githubStatus
-                : mockConnectedList.includes(platform.id);
+                : false;
 
               const connectionDetails: PlatformCardConnectionDetails | undefined = !isConnected ? undefined
                 : isGmail && gmailStatus ? {
@@ -671,10 +633,8 @@ export default function IntegrationsPage() {
                       setShowDiscordConnectModal(true);
                     } else if (isLinkedin) {
                       window.location.assign(`/api/linkedin?userId=${user?.id}`);
-                    } else if (isGithub) {
+                      } else if (isGithub) {
                       window.location.assign(`/api/github?userId=${user?.id}`);
-                    } else {
-                      handleConnectMockPlatform(platform.id);
                     }
                   }}
                   onDisconnect={() => {
@@ -694,8 +654,6 @@ export default function IntegrationsPage() {
                       disconnectLinkedinAction(user.id).then(() => setLinkedinStatus(null));
                     } else if (isGithub && user) {
                       disconnectGithubAction(user.id).then(() => setGithubStatus(null));
-                    } else {
-                      handleDisconnectMockPlatform(platform.id);
                     }
                   }}
                   onSettings={() => handleSettingsClick(platform)}

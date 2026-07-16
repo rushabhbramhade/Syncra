@@ -22,7 +22,7 @@ export async function requestWhatsAppPairingCodeAction(userId: string, phoneNumb
  */
 export async function getWhatsAppStatusAction(userId: string) {
   try {
-    const hasSession = WhatsAppClientManager.isSessionSaved(userId);
+    const hasSession = await WhatsAppClientManager.isSessionSaved(userId);
     if (hasSession) {
       // In the background, make sure the connection is initialized and active
       WhatsAppClientManager.getClient(userId).catch(err => {

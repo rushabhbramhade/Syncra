@@ -58,7 +58,7 @@ export class LinkedInProvider implements IntegrationProvider {
   }
 
   async revokeAccess(token: string): Promise<void> {
-    await LinkedInService.revokeToken(token);
+    await LinkedInService.revokeToken(token, this.getClientId(), this.getClientSecret());
   }
 
   getTools(): MCPTool[] {

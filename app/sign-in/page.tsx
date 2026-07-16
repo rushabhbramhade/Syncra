@@ -138,6 +138,8 @@ export default function SignIn() {
       if (result && result.error) {
         setFormError(result.error.message || "Failed to initialize Google Sign-In.");
         setIsOAuthLoading(false);
+      } else if (result && result.redirectUrl) {
+        window.location.href = result.redirectUrl;
       }
     } catch (err: unknown) {
       const errorObj = err as { message?: string; digest?: string };

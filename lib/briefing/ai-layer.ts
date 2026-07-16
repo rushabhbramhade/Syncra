@@ -1,12 +1,14 @@
 import { NormalizedEvent } from "../events/normalized-event";
-import { AIResponseBriefing } from "./types";
+import { AIResponseBriefing, ItemExplanation } from "./types";
 import { generateJsonResponse } from "../ai-service";
+
+export type AIExplanation = ItemExplanation;
 
 export interface AIEnrichment {
   executiveSummary: string;
   itemSummaries: Record<string, string>;
   recommendations: AIRecommendation[];
-  explanations: Record<string, AIExplanation>;
+  explanations: Record<string, ItemExplanation>;
   confidenceScores: Record<string, number>;
 }
 
@@ -16,14 +18,6 @@ export interface AIRecommendation {
   relatedEventIds: string[];
   estimatedEffortMinutes: number;
   businessImpact: "high" | "medium" | "low";
-}
-
-export interface AIExplanation {
-  whyClassified: string;
-  rulesMatched: string[];
-  signals: string[];
-  confidence: number;
-  recommendedAction: string;
 }
 
 export function generateSummary(scoredEvents: NormalizedEvent[]): string {
@@ -69,8 +63,17 @@ Output JSON array only:
   }));
 }
 
-export function generateExplanations(scoredEvents: NormalizedEvent[]): Record<string, AIExplanation> {
-  const explanations: Record<string, AIExplanation> = {};
+function classifyPlatform(platform: string): string {
+  const p = platform.toLowerCase();
+  if (p === "github") return "activity";
+  if (p === "linkedin") return "activity";
+  if (p === "gmail") return "email";
+  if (p === "slack" || p === "whatsapp" || p === "telegram" || p === "discord") return "messages";
+  return "messages";
+}
+
+export function generateExplanations(scoredEvents: NormalizedEvent[]): Record<string, ItemExplanation> {
+  const explanations: Record<string, ItemExplanation> = {};
 
   for (const event of scoredEvents) {
     const signals: string[] = [];
@@ -80,17 +83,20 @@ export function generateExplanations(scoredEvents: NormalizedEvent[]): Record<st
     if (event.metadata?.gmail?.hasAttachments) signals.push("Has attachment");
     if (event.metadata?.slack?.isMention) signals.push("You were mentioned");
     if (event.metadata?.github?.isReviewRequested) signals.push("Review requested");
+    if (event.metadata?.github?.status === "open" && event.metadata?.github?.issueNumber) signals.push("Open issue requiring attention");
+    if (event.metadata?.github?.isReviewRequested) signals.push("Review requested on PR");
     if (event.labels?.includes("follow-up")) signals.push("Flagged as follow-up");
     if (event.labels?.includes("risk")) signals.push("Potential risk detected");
     if (event.labels?.includes("financial")) signals.push("Financial document");
+    if (event.labels?.includes("deadline")) signals.push("Deadline mentioned");
 
-    let why = `This ${event.platform} item was classified as ${event.priority} priority with a score of ${event.score}/100.`;
-    if (signals.length > 0) why += ` Signals detected: ${signals.join(", ")}.`;
+    let why = `This ${event.platform} item was classified as ${event.priority} priority with a score of ${event.score || 50}/100.`;
+    if (signals.length > 0) why += ` Signals: ${signals.join(", ")}.`;
     if (event.rulesMatched?.length > 0) why += ` Matched ${event.rulesMatched.length} rule(s).`;
 
+    const category = classifyPlatform(event.platform);
     explanations[event.id] = {
       whyClassified: why,
-      rulesMatched: event.rulesMatched || [],
       signals,
       confidence: event.confidence || 0.85,
       recommendedAction: event.priority === "critical" ? "Address immediately" :
@@ -103,7 +109,7 @@ export function generateExplanations(scoredEvents: NormalizedEvent[]): Record<st
 }
 
 export async function generateEnhancedBriefing(events: NormalizedEvent[], briefType: "morning" | "midday" | "evening" | "weekly"): Promise<AIResponseBriefing | null> {
-  const prompt = `You are Syncra's briefing generator. Generate a ${briefType} briefing JSON from normalized events. Output exactly the AIResponseBriefing schema.`;
+  const prompt = `You are Syncra's briefing generator. Generate a ${briefType} briefing JSON from normalized events. Output exactly the AIResponseBriefing schema. Include an "activity" category for GitHub (releases, stars, PRs) and LinkedIn (feed updates, connection requests) items that don't fit email/messages/tasks/followUps.`;
 
   const eventData = events.slice(0, 50).map(e => ({
     platform: e.platform,

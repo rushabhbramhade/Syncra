@@ -21,7 +21,7 @@ export class DiscordProvider implements IntegrationProvider {
   }
 
   async refreshAccess(_refreshToken: string): Promise<{ accessToken: string; expiresIn: number }> {
-    return { accessToken: "", expiresIn: 86400 * 365 };
+    throw new Error("Discord bot tokens are static and cannot be refreshed via OAuth.");
   }
 
   async getProfile(_accessToken: string): Promise<IntegrationProfile> {

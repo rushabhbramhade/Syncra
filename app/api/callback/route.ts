@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
       baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
       anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
       cookies: cookieStore,
+      timeout: 10000,
     });
 
     const { data, error } = await auth.exchangeOAuthCode(code, codeVerifier);

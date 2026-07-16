@@ -61,27 +61,26 @@ export function verifyStateFull(state: string, expectedRedirectUri?: string): { 
 }
 
 export function verifyState(state: string, expectedRedirectUri?: string): string | null {
-  try {
-    const secret = getHmacSecret();
-    const dotIndex = state.lastIndexOf(".");
-    if (dotIndex === -1) return null;
-    const payload = state.substring(0, dotIndex);
-    const signature = state.substring(dotIndex + 1);
+  const result = verifyStateFull(state, expectedRedirectUri);
+  return result?.userId || null;
+}
 
-    const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-      return null;
-    }
+const consumedStates = new Set<string>();
 
-    const decoded = decodePayload(payload);
-    if (!decoded) return null;
+export function consumeState(state: string): boolean {
+  const dotIndex = state.lastIndexOf(".");
+  if (dotIndex === -1) return false;
+  const payload = state.substring(0, dotIndex);
+  const key = payload;
+  if (consumedStates.has(key)) return false;
+  consumedStates.add(key);
+  setTimeout(() => consumedStates.delete(key), STATE_TTL_MS);
+  return true;
+}
 
-    if (expectedRedirectUri && decoded.redirectUri && decoded.redirectUri !== expectedRedirectUri) {
-      return null;
-    }
-
-    return decoded.userId;
-  } catch {
-    return null;
-  }
+export function setOAuthStateCookie(state: string): string {
+  const isHttps = process.env.NODE_ENV === "production" ||
+    (process.env.NEXT_PUBLIC_APP_URL || "").startsWith("https");
+  const secure = isHttps ? "; Secure" : "";
+  return `oauth_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${secure}`;
 }

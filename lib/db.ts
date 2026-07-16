@@ -8,5 +8,5 @@ export function createAdminDb() {
     throw new Error("Missing InsForge configuration: NEXT_PUBLIC_INSFORGE_BASE_URL and INSFORGE_API_KEY must be set.");
   }
 
-  return createAdminClient({ baseUrl, apiKey });
+  return createAdminClient({ baseUrl, apiKey, timeout: 10000 });
 }

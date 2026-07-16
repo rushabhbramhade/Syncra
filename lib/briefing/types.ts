@@ -1,3 +1,5 @@
+export type BriefingCategory = "email" | "meetings" | "messages" | "tasks" | "followUps" | "activity";
+
 export interface AIResponseBriefing {
   title: string;
   executiveSummary: string;
@@ -11,6 +13,7 @@ export interface AIResponseBriefing {
     messages?: { summary: string; items: Array<{ platform: string; sender: string; text: string; channel?: string }> };
     tasks?: { summary: string; items: Array<{ title: string; dueDate?: string; status: string; suggestion?: string }> };
     followUps?: { summary: string; items: Array<{ title: string; recommendedAction: string; dueDate?: string }> };
+    activity?: { summary: string; items: Array<{ platform: string; type: string; title: string; url?: string }> };
   };
   recommendations: Array<{ text: string; type: string; platform?: string; sourceId?: string }>;
   items: Array<{
@@ -21,5 +24,27 @@ export interface AIResponseBriefing {
     shortSummary: string;
     originalContent: string;
     sourceId?: string;
+    from?: string;
+    to?: string;
   }>;
+}
+
+export interface ItemExplanation {
+  whyClassified: string;
+  signals: string[];
+  confidence: number;
+  recommendedAction: string;
+}
+
+export interface CorrelationLink {
+  platform: string;
+  text: string;
+  itemId?: string;
+}
+
+export interface PlatformAction {
+  label: string;
+  action: string;
+  mcpTool: string;
+  icon: string;
 }

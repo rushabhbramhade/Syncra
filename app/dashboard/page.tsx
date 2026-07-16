@@ -9,7 +9,7 @@ import {
   generateBriefingAction
 } from "@/app/actions/briefing";
 import {
-  Mail, Inbox, MessageCircle, Wifi, WifiOff
+  Mail, Inbox, MessageCircle, WifiOff
 } from "lucide-react";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { StatsOverview } from "@/components/dashboard/stats-overview";
@@ -42,7 +42,6 @@ export default function Dashboard() {
   const [briefData, setBriefData] = useState<ExtendedBriefData | null>(null);
   const [isBriefLoading, setIsBriefLoading] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
-  const [isDemoMode, setIsDemoMode] = useState(false);
 
   const [connectedApps, setConnectedApps] = useState<{
     id: string;
@@ -71,22 +70,13 @@ export default function Dashboard() {
       }));
       setConnectedApps(apps);
 
-      const activePlatformIds = apps.filter(a => a.connected).map(a => a.id);
-      let finalPlatforms = [...activePlatformIds];
-
-      const stored = localStorage.getItem("syncra-mock-connected-platforms");
-      if (stored) {
-        try {
-          const mockApps = JSON.parse(stored);
-          const uniqueMockApps = mockApps.filter((id: string) => !activePlatformIds.includes(id));
-          if (uniqueMockApps.length > 0) setIsDemoMode(true);
-          finalPlatforms = Array.from(new Set([...finalPlatforms, ...uniqueMockApps]));
-        } catch {}
-      }
+      const finalPlatforms = apps.filter(a => a.connected).map(a => a.id);
 
       const data = await generateDashboardBrief(authUserId, finalPlatforms);
       if (data) {
         setBriefData(data);
+      } else if (finalPlatforms.length > 0) {
+        setDataError("Unable to load dashboard data from your connected platforms. Please try again.");
       }
     } catch (e) {
       console.error("Failed to load dashboard data:", e);
@@ -180,13 +170,6 @@ export default function Dashboard() {
 
   return (
     <div className="pb-10 font-sans max-w-6xl mx-auto animate-fade-in">
-      {isDemoMode && !briefData?.id && (
-        <div className="mb-6 p-4 bg-warning-bg border-[2.5px] border-warning rounded-[24px] flex items-center gap-3 text-warning font-bold neo-shadow-sm">
-          <Wifi className="w-5 h-5 shrink-0" />
-          <p className="text-[13px]">Demo Mode enabled. Some platforms are simulated. Connect real accounts in Integrations for live data.</p>
-        </div>
-      )}
-
       {dataError && (
         <div className="mb-6 p-4 bg-error-bg border-[2.5px] border-error rounded-[24px] flex items-center justify-between gap-3 text-error font-bold neo-shadow-sm">
           <div className="flex items-center gap-3">

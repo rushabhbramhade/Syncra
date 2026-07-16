@@ -2,7 +2,6 @@
 
 import { createAuthActions, createServerClient } from "@insforge/sdk/ssr";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import { UsersRepository } from "@/lib/repositories/users-repository";
 import { createAdminDb } from "@/lib/db";
 
@@ -31,7 +30,7 @@ export async function syncUserToDatabase(userData: {
   const admin = createAdminDb();
   const repo = new UsersRepository(admin);
 
-  return retry(async () => {
+  const userRecord = await retry(async () => {
     const existingUser = await repo.findByAuthId(userData.auth_user_id);
 
     if (!existingUser) {
@@ -65,12 +64,19 @@ export async function syncUserToDatabase(userData: {
       avatar_url: userData.avatar_url || existingUser.avatar_url,
     });
   });
+
+  return userRecord;
 }
+
+const AUTH_CONFIG = {
+  baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
+  anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
+  timeout: 10000,
+};
 
 export async function signInAction(email: string, password: string) {
   const auth = createAuthActions({
-    baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
-    anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
+    ...AUTH_CONFIG,
     cookies: await cookies(),
   });
   return await auth.signInWithPassword({ email, password });
@@ -78,8 +84,7 @@ export async function signInAction(email: string, password: string) {
 
 export async function signUpAction(userData: { email: string; password: string; name?: string; redirectTo?: string }) {
   const auth = createAuthActions({
-    baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
-    anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
+    ...AUTH_CONFIG,
     cookies: await cookies(),
   });
   return await auth.signUp(userData);
@@ -91,8 +96,7 @@ export async function signOutAction() {
   cookieStore.set("insforge_refresh_token", "", { path: "/", maxAge: -1 });
   
   const auth = createAuthActions({
-    baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
-    anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
+    ...AUTH_CONFIG,
     cookies: cookieStore,
   });
   return await auth.signOut();
@@ -100,8 +104,7 @@ export async function signOutAction() {
 
 export async function verifyEmailAction(email: string, otp: string) {
   const auth = createAuthActions({
-    baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
-    anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
+    ...AUTH_CONFIG,
     cookies: await cookies(),
   });
   return await auth.verifyEmail({ email, otp });
@@ -109,8 +112,7 @@ export async function verifyEmailAction(email: string, otp: string) {
 
 export async function resendVerificationEmailAction(email: string, redirectTo?: string) {
   const client = createServerClient({
-    baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
-    anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
+    ...AUTH_CONFIG,
     cookies: await cookies(),
   });
   return await client.auth.resendVerificationEmail({ email, redirectTo });
@@ -118,8 +120,7 @@ export async function resendVerificationEmailAction(email: string, redirectTo?: 
 
 export async function signInWithGoogleAction(redirectTo: string) {
   const auth = createAuthActions({
-    baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
-    anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
+    ...AUTH_CONFIG,
     cookies: await cookies(),
   });
 
@@ -142,7 +143,7 @@ export async function signInWithGoogleAction(redirectTo: string) {
       path: "/",
       maxAge: 60 * 10, // 10 minutes
     });
-    redirect(data.url);
+    return { redirectUrl: data.url };
   } else {
     return { error: { message: "Invalid OAuth response from server", statusCode: 500, error: "OAUTH_INIT_ERROR" } };
   }
@@ -184,8 +185,7 @@ export async function getCurrentUserAction() {
   }
 
   const client = createServerClient({
-    baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
-    anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
+    ...AUTH_CONFIG,
     cookies: cookieStore,
   });
 

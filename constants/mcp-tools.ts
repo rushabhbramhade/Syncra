@@ -501,4 +501,106 @@ export const PLATFORM_MCP_TOOLS: Record<string, MCPTool[]> = {
       ],
     },
   ],
+  calendar: [
+    {
+      name: "calendar_list_events",
+      displayName: "List Events",
+      description: "List upcoming events from a Google Calendar with optional time range filters.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          calendarId: { type: "string", description: "Calendar ID (defaults to primary)." },
+          timeMin: { type: "string", description: "ISO 8601 start time filter." },
+          timeMax: { type: "string", description: "ISO 8601 end time filter." },
+          limit: { type: "number", description: "Max events to return (default: 20)." },
+        },
+      },
+      arguments: [
+        { name: "calendarId", label: "Calendar ID", type: "string", placeholder: "primary" },
+        { name: "timeMin", label: "Start Time", type: "string", placeholder: "2026-01-01T00:00:00Z" },
+        { name: "timeMax", label: "End Time", type: "string", placeholder: "2026-12-31T23:59:59Z" },
+        { name: "limit", label: "Limit", type: "number", defaultValue: 20 },
+      ],
+    },
+    {
+      name: "calendar_get_event",
+      displayName: "Get Event",
+      description: "Retrieve full details of a specific calendar event by ID.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          calendarId: { type: "string", description: "Calendar ID (defaults to primary)." },
+          eventId: { type: "string", description: "The event ID to fetch." },
+        },
+        required: ["eventId"],
+      },
+      arguments: [
+        { name: "calendarId", label: "Calendar ID", type: "string", placeholder: "primary" },
+        { name: "eventId", label: "Event ID", type: "string", placeholder: "abc123def456", required: true },
+      ],
+    },
+  ],
+  outlook: [
+    {
+      name: "outlook_search_emails",
+      displayName: "Search Emails",
+      description: "Search emails in Outlook mailbox using Microsoft Graph search syntax.",
+      inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] },
+      arguments: [
+        { name: "query", label: "Search Query", type: "string", placeholder: "meeting", required: true },
+        { name: "limit", label: "Limit", type: "number", defaultValue: 10 },
+      ],
+    },
+    {
+      name: "outlook_send_email",
+      displayName: "Send Email",
+      description: "Send an email via Microsoft Graph.",
+      inputSchema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] },
+      arguments: [
+        { name: "to", label: "Recipient", type: "string", placeholder: "colleague@company.com", required: true },
+        { name: "subject", label: "Subject", type: "string", placeholder: "Update", required: true },
+        { name: "body", label: "Body", type: "textarea", placeholder: "Message...", required: true },
+      ],
+    },
+  ],
+  notion: [
+    {
+      name: "notion_search",
+      displayName: "Search",
+      description: "Search connected Notion pages and databases.",
+      inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      arguments: [
+        { name: "query", label: "Search Query", type: "string", placeholder: "meeting notes", required: true },
+      ],
+    },
+    {
+      name: "notion_get_page",
+      displayName: "Get Page",
+      description: "Retrieve a Notion page's content and children blocks.",
+      inputSchema: { type: "object", properties: { pageId: { type: "string" } }, required: ["pageId"] },
+      arguments: [
+        { name: "pageId", label: "Page ID", type: "string", placeholder: "abc123...", required: true },
+      ],
+    },
+  ],
+  linear: [
+    {
+      name: "linear_list_issues",
+      displayName: "List Issues",
+      description: "List recent issues from Linear.",
+      inputSchema: { type: "object", properties: { limit: { type: "number" } } },
+      arguments: [
+        { name: "limit", label: "Limit", type: "number", defaultValue: 20 },
+      ],
+    },
+    {
+      name: "linear_get_issue",
+      displayName: "Get Issue",
+      description: "Get full details of a specific Linear issue by ID.",
+      inputSchema: { type: "object", properties: { issueId: { type: "string" } }, required: ["issueId"] },
+      arguments: [
+        { name: "issueId", label: "Issue ID", type: "string", placeholder: "abc123", required: true },
+      ],
+    },
+  ],
 };

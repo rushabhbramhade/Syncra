@@ -48,6 +48,7 @@ export interface BriefingHistoryRecord {
   id?: string;
   user_id: string;
   schedule_id?: string | null;
+  briefing_id?: string | null;
   execution_time: string;
   duration?: number | null;
   status: string;
@@ -158,6 +159,7 @@ export class BriefingsRepository {
       scheduleId?: string;
       status?: string;
       search?: string;
+      id?: string;
     }
   ): Promise<BriefingRecord[]> {
     let query = this.db.database
@@ -166,6 +168,9 @@ export class BriefingsRepository {
       .eq("user_id", userId)
       .order("generated_at", { ascending: false });
 
+    if (options?.id) {
+      query = query.eq("id", options.id);
+    }
     if (options?.scheduleId) {
       query = query.eq("schedule_id", options.scheduleId);
     }
@@ -319,6 +324,18 @@ export class BriefingsRepository {
       .single();
 
     if (error) throw new Error(`Failed to update item status: ${error.message}`);
+    return data as BriefingItemRecord;
+  }
+
+  async updateItemMetadata(id: string, metadata: Record<string, unknown>): Promise<BriefingItemRecord> {
+    const { data, error } = await this.db.database
+      .from("briefing_items")
+      .update({ metadata })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw new Error(`Failed to update item metadata: ${error.message}`);
     return data as BriefingItemRecord;
   }
 

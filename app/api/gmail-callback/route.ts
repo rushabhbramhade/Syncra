@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { IntegrationRegistry } from "@/lib/integrations";
 import { saveConnection } from "@/app/actions/integrations";
-import { verifyState } from "@/lib/oauth-state";
+import { verifyState, consumeState } from "@/lib/oauth-state";
 import { getRedirectUri } from "@/lib/oauth";
 
 const OAUTH_LOG_PREFIX = "[GmailCallback]";
@@ -62,6 +62,13 @@ export async function GET(request: NextRequest) {
     }
 
     console.log(`${OAUTH_LOG_PREFIX} state verified for userId=${userId}`);
+
+    if (!consumeState(state)) {
+      console.error(`${OAUTH_LOG_PREFIX} state already consumed (replay attack detected)`);
+      return NextResponse.redirect(
+        new URL("/dashboard/integrations?error=oauth_state_reused", request.url)
+      );
+    }
 
     const provider = IntegrationRegistry.get("gmail");
     if (!provider) {

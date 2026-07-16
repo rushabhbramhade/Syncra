@@ -192,12 +192,11 @@ export default function SignUp() {
       if (result && result.error) {
         setFormError(result.error.message || "Failed to initialize Google Sign-Up.");
         setIsOAuthLoading(false);
+      } else if (result && result.redirectUrl) {
+        window.location.href = result.redirectUrl;
       }
     } catch (err: unknown) {
       const errorObj = err as { message?: string; digest?: string };
-      if (errorObj.message?.includes("NEXT_REDIRECT") || errorObj.digest?.startsWith("NEXT_REDIRECT")) {
-        throw err;
-      }
       setFormError(errorObj.message || "Failed to redirect to Google.");
       setIsOAuthLoading(false);
     }

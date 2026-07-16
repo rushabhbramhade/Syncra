@@ -6,6 +6,8 @@ import { DiscordService } from "@/lib/discord/discord-service";
 import { TelegramService } from "@/lib/telegram/telegram-service";
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
 import { createAdminDb } from "@/lib/db";
+import { logger, getCorrelationId } from "@/lib/logger";
+import { ToolPermissionsRepository } from "@/lib/repositories/tool-permissions-repository";
 
 function getRepo(): IntegrationsRepository {
   return new IntegrationsRepository(createAdminDb());
@@ -78,12 +80,26 @@ export async function disconnectConnection(userId: string, providerId: string) {
 }
 
 export async function executeMCPAction(userId: string, providerId: string, actionName: string, args: Record<string, unknown>) {
+  const correlationId = getCorrelationId() || `mcp_${Date.now().toString(36)}`;
+  const log = logger.child({ correlationId, userId, providerId, actionName });
+  const startTime = Date.now();
+
   const provider = IntegrationRegistry.get(providerId);
   if (!provider) {
+    log.warn(`Provider ${providerId} not found`);
     return { status: "error", error: { code: -32002, message: `Provider ${providerId} not found.` } };
   }
 
   try {
+    log.info("Executing MCP action");
+
+    const permRepo = new ToolPermissionsRepository();
+    const isToolEnabled = await permRepo.isToolEnabled(userId, actionName);
+    if (!isToolEnabled) {
+      log.warn(`Tool ${actionName} is disabled by user`);
+      return { status: "error", error: { code: -32005, message: `The tool "${actionName}" is currently disabled. Enable it in Integrations settings.` } };
+    }
+
     const repo = getRepo();
     const record = await repo.findByUserAndProvider(userId, providerId);
 
@@ -101,9 +117,15 @@ export async function executeMCPAction(userId: string, providerId: string, actio
     const expiryTime = new Date(record.expires_at || "").getTime();
     const isExpired = Date.now() >= (expiryTime - 60000);
 
-    if (isExpired && refreshToken) {
+    if (isExpired) {
+      if (!refreshToken) {
+        return { status: "error", error: { code: -32004, message: `${provider.name} token has expired. Please reconnect your account.` } };
+      }
       try {
         const refreshData = await provider.refreshAccess(refreshToken);
+        if (!refreshData.accessToken) {
+          return { status: "error", error: { code: -32001, message: `${provider.name} token refresh returned empty. Please reconnect your account.` } };
+        }
         accessToken = refreshData.accessToken;
 
         await repo.upsert({
@@ -120,13 +142,17 @@ export async function executeMCPAction(userId: string, providerId: string, actio
       }
     }
 
+
     const result = await provider.executeTool(accessToken, actionName, args);
     repo.updateLastSync(userId, providerId);
 
+    const duration = Date.now() - startTime;
+    log.info({ duration, status: "success" }, `MCP action completed in ${duration}ms`);
     return { status: "success", result };
   } catch (err: unknown) {
     const errorObj = err as { message?: string };
-    console.error(`Error executing action ${actionName}:`, err);
+    const duration = Date.now() - startTime;
+    log.error({ duration, error: errorObj.message }, `MCP action failed after ${duration}ms`);
     return { status: "error", error: { code: -32003, message: errorObj.message || `Failed to execute action ${actionName}.` } };
   }
 }

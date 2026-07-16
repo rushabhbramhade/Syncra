@@ -50,7 +50,7 @@ export class GitHubProvider implements IntegrationProvider {
   }
 
   async revokeAccess(token: string): Promise<void> {
-    await GitHubService.revokeToken(this.getClientId(), token);
+    await GitHubService.revokeToken(this.getClientId(), this.getClientSecret(), token);
   }
 
   getTools(): MCPTool[] {

@@ -73,11 +73,16 @@ export class WhatsAppProvider implements IntegrationProvider {
         if (messages.length === 0) {
           return { summary: "No message history available to summarize." };
         }
-        return {
-          summary: `Summary of chat with ${messages[0]?.fromName || "User"}: The conversation revolves around project updates, WhatsApp channel synchronization, and staging deployments. Key action items include reviewing files in the standup.`,
-          messageCount: messages.length,
-          lastMessageTime: messages[0]?.timestamp,
-        };
+        let summary = `Chat with ${messages[0]?.fromName || "User"}: ${messages.length} messages available.`;
+        try {
+          const { generateJsonResponse } = await import("@/lib/ai-service");
+          const aiResult = await generateJsonResponse<{ summary: string }>(
+            "Summarize this WhatsApp conversation in 2-3 sentences. Focus on key topics, decisions, and action items.",
+            { messages: messages.slice(0, 20).map(m => ({ from: m.fromName, text: m.message })) }
+          );
+          if (aiResult?.summary) summary = aiResult.summary;
+        } catch {}
+        return { summary, messageCount: messages.length, lastMessageTime: messages[0]?.timestamp };
       }
       case "whatsapp_get_contact": {
         const jid = args.jid as string;
@@ -93,11 +98,7 @@ export class WhatsAppProvider implements IntegrationProvider {
           const groups = await sock.groupFetchAllParticipating();
           return Object.values(groups);
         } catch {
-          // Fallback to high-fidelity mock groups for sandboxing
-          return [
-            { id: "1112223333@g.us", subject: "Syncra Dev Team", creation: Date.now(), owner: "1234567890@s.whatsapp.net" },
-            { id: "4445556666@g.us", subject: "Client Feedback Group", creation: Date.now(), owner: "9876543210@s.whatsapp.net" }
-          ];
+          throw new Error("Failed to fetch WhatsApp groups after multiple attempts");
         }
       }
       case "whatsapp_fetch_group_messages": {

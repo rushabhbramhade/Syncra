@@ -57,22 +57,28 @@ export async function generateJsonResponse<T>(
 
   for (const model of FALLBACK_MODELS) {
     if (!model) continue;
-    try {
-      const response = await client.chat.completions.create({
-        model,
-        messages,
-        response_format: { type: "json_object" },
-      });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await client.chat.completions.create({
+          model,
+          messages,
+          response_format: { type: "json_object" },
+        });
 
-      let textContent = response.choices[0]?.message?.content;
-      if (textContent) {
-        textContent = textContent.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-        return JSON.parse(textContent) as T;
+        let textContent = response.choices[0]?.message?.content;
+        if (textContent) {
+          textContent = textContent.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+          return JSON.parse(textContent) as T;
+        }
+      } catch (error) {
+        const err = error as { status?: number; message?: string };
+        console.warn(`AI model ${model} (attempt ${attempt + 1}) failed:`, err.message || err);
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+          continue;
+        }
+        break;
       }
-    } catch (error) {
-      const err = error as { status?: number; message?: string };
-      console.warn(`AI model ${model} failed:`, err.message || err);
-      continue;
     }
   }
 

@@ -134,16 +134,9 @@ function PlatformCard({
               </div>
             </>
           ) : (
-            <>
-              <div className="flex justify-between">
-                <span>Sync Mode:</span>
-                <span className="font-bold text-secondary">Sandbox Simulation</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Status:</span>
-                <span className="font-bold text-success">Active</span>
-              </div>
-            </>
+            <div className="flex justify-center">
+              <span className="text-text-slate">Sync details unavailable</span>
+            </div>
           )}
         </div>
       )}

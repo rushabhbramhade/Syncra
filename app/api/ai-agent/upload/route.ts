@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
       baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
       anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
       cookies: await cookies(),
+      timeout: 10000,
     });
 
     // 4. Generate unique file key under the user's directory

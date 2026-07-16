@@ -1,6 +1,7 @@
 import { IntegrationProvider, AuthTokens, IntegrationProfile, IntegrationRegistry } from "./provider-base";
 import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
 import { randomBytes, createHash } from "crypto";
+import { fetchWithRetry } from "@/lib/api-retry";
 
 export class SlackApiService {
   private static baseUrl = "https://slack.com/api";
@@ -42,7 +43,7 @@ export class SlackApiService {
     if (codeVerifier) {
       params.set("code_verifier", codeVerifier);
     }
-    const res = await fetch(`${this.baseUrl}/oauth.v2.access`, {
+    const res = await fetchWithRetry(`${this.baseUrl}/oauth.v2.access`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
@@ -65,7 +66,7 @@ export class SlackApiService {
   }
 
   static async getProfile(accessToken: string): Promise<IntegrationProfile> {
-    const res = await fetch(`${this.baseUrl}/auth.test`, {
+    const res = await fetchWithRetry(`${this.baseUrl}/auth.test`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) throw new Error(`Slack auth.test failed: ${res.statusText}`);
@@ -78,7 +79,7 @@ export class SlackApiService {
   }
 
   static async getTeamInfo(accessToken: string): Promise<{ id: string; name: string }> {
-    const res = await fetch(`${this.baseUrl}/team.info`, {
+    const res = await fetchWithRetry(`${this.baseUrl}/team.info`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) throw new Error(`Slack team.info failed: ${res.statusText}`);
@@ -88,7 +89,7 @@ export class SlackApiService {
   }
 
   static async postMessage(accessToken: string, channel: string, text: string): Promise<unknown> {
-    const res = await fetch(`${this.baseUrl}/chat.postMessage`, {
+    const res = await fetchWithRetry(`${this.baseUrl}/chat.postMessage`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -103,7 +104,7 @@ export class SlackApiService {
   }
 
   static async listChannels(accessToken: string): Promise<unknown[]> {
-    const res = await fetch(`${this.baseUrl}/conversations.list?types=public_channel&limit=100`, {
+    const res = await fetchWithRetry(`${this.baseUrl}/conversations.list?types=public_channel&limit=100`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) throw new Error(`Slack conversations.list failed: ${res.statusText}`);
@@ -120,7 +121,7 @@ export class SlackApiService {
       .map(c => c.id);
     const allMessages: unknown[] = [];
     for (const channelId of channelIds) {
-      const res = await fetch(
+      const res = await fetchWithRetry(
         `${this.baseUrl}/conversations.history?channel=${channelId}&limit=${Math.ceil(limit / channelIds.length)}`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
@@ -190,7 +191,7 @@ export class SlackProvider implements IntegrationProvider {
 
   async revokeAccess(token: string): Promise<void> {
     const params = new URLSearchParams({ token });
-    const res = await fetch("https://slack.com/api/auth.revoke", {
+    const res = await fetchWithRetry("https://slack.com/api/auth.revoke", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),

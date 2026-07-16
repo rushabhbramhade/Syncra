@@ -18,17 +18,8 @@ export function useProductivityMetrics(userId: string | undefined) {
   const refresh = useCallback(async () => {
     if (!userId) return;
     setIsLoading(true);
-    // Simulated — replace with real analytics query
-    await new Promise(r => setTimeout(r, 500));
-    setMetrics({
-      emailsReplied: 12,
-      tasksCompleted: 5,
-      meetingsAttended: 3,
-      averageResponseTimeMinutes: 18,
-      focusHoursToday: 4.5,
-      aiInteractions: 8,
-      trend: "up",
-    });
+    // Not yet implemented — requires real analytics data aggregation
+    setMetrics(null);
     setIsLoading(false);
   }, [userId]);
 
