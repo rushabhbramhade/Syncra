@@ -47,7 +47,9 @@ export async function checkRateLimit(
   const windowStart = now - config.windowMs;
 
   try {
-    await db.database.rpc("cleanup_rate_limits", {}).catch(() => {});
+    try {
+      await db.database.rpc("cleanup_rate_limits", {});
+    } catch {}
 
     const { data: existing } = await db.database
       .from("rate_limits")

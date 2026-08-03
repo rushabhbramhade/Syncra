@@ -45,24 +45,14 @@ export interface Logger {
 
 const defaultLogger = createLogger();
 
-export const logger: Logger = {
-  info: (msg, ...args) => defaultLogger.info(msg, ...args),
-  warn: (msg, ...args) => defaultLogger.warn(msg, ...args),
-  error: (msg, ...args) => defaultLogger.error(msg, ...args),
-  debug: (msg, ...args) => defaultLogger.debug(msg, ...args),
-  child: (bindings) => {
-    const childLogger = defaultLogger.child(bindings);
-    return {
-      info: (msg, ...args) => childLogger.info(msg, ...args),
-      warn: (msg, ...args) => childLogger.warn(msg, ...args),
-      error: (msg, ...args) => childLogger.error(msg, ...args),
-      debug: (msg, ...args) => childLogger.debug(msg, ...args),
-      child: (b) => ({
-        info: (msg, ...args) => childLogger.child(b).info(msg, ...args),
-        warn: (msg, ...args) => childLogger.child(b).warn(msg, ...args),
-        error: (msg, ...args) => childLogger.child(b).error(msg, ...args),
-        debug: (msg, ...args) => childLogger.child(b).debug(msg, ...args),
-      }),
-    };
-  },
-};
+function wrapLogger(base: ReturnType<typeof createLogger>): Logger {
+  return {
+    info: (msg, ...args) => base.info(msg, ...args),
+    warn: (msg, ...args) => base.warn(msg, ...args),
+    error: (msg, ...args) => base.error(msg, ...args),
+    debug: (msg, ...args) => base.debug(msg, ...args),
+    child: (bindings) => wrapLogger(base.child(bindings)),
+  };
+}
+
+export const logger: Logger = wrapLogger(defaultLogger);

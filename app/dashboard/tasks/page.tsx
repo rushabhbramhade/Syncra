@@ -5,7 +5,7 @@ import { useAuth } from "@/components/auth-provider";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CheckCircle2, Circle, Clock, AlertTriangle, ListTodo } from "lucide-react";
-import { TaskExtractionService } from "@/lib/services/task-extraction-service";
+import { getTasks, updateTaskStatus } from "@/lib/services/task-extraction-service";
 
 export default function TasksPage() {
   const { user, dbUser } = useAuth();
@@ -16,8 +16,7 @@ export default function TasksPage() {
     if (!dbUser?.id) return;
     setIsLoading(true);
     try {
-      const service = new TaskExtractionService();
-      const userTasks = await service.getTasks(dbUser.id);
+      const userTasks = await getTasks(dbUser.id);
       setTasks(userTasks);
     } catch {
       setTasks([]);
@@ -32,8 +31,7 @@ export default function TasksPage() {
     if (!dbUser?.id) return;
     const newStatus = currentStatus === "completed" ? "pending" : "completed";
     try {
-      const service = new TaskExtractionService();
-      await service.updateTaskStatus(dbUser.id, taskId, newStatus);
+      await updateTaskStatus(dbUser.id, taskId, newStatus);
       setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
     } catch {}
   };

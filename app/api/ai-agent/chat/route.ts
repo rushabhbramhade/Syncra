@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     const userId = userRecord.id;
 
     // 2a. Rate limit check
-    const rateLimitCheck = await checkRateLimit(userData.user.id, "ai-agent", userData.user.tier || "free");
+    const rateLimitCheck = await checkRateLimit(userData.user.id, "ai-agent", "free");
     if (!rateLimitCheck.allowed) {
       return new Response(JSON.stringify({
         error: "Rate limit exceeded. Please wait before sending another message.",

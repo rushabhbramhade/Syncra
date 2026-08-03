@@ -5,9 +5,15 @@ import { DiscordProvider } from "@/lib/integrations/discord-provider";
 import { DiscordService } from "@/lib/discord/discord-service";
 import { TelegramService } from "@/lib/telegram/telegram-service";
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
+import type { IntegrationRecord } from "@/lib/repositories/integrations-repository";
 import { createAdminDb } from "@/lib/db";
 import { logger, getCorrelationId } from "@/lib/logger";
 import { ToolPermissionsRepository } from "@/lib/repositories/tool-permissions-repository";
+import {
+  connectIntegrationSchema,
+  disconnectIntegrationSchema,
+  refreshTokenSchema,
+} from "@/features/integrations/schemas";
 
 function getRepo(): IntegrationsRepository {
   return new IntegrationsRepository(createAdminDb());
@@ -147,12 +153,12 @@ export async function executeMCPAction(userId: string, providerId: string, actio
     repo.updateLastSync(userId, providerId);
 
     const duration = Date.now() - startTime;
-    log.info({ duration, status: "success" }, `MCP action completed in ${duration}ms`);
+    log.info(`MCP action completed in ${duration}ms`, { duration, status: "success" });
     return { status: "success", result };
   } catch (err: unknown) {
     const errorObj = err as { message?: string };
     const duration = Date.now() - startTime;
-    log.error({ duration, error: errorObj.message }, `MCP action failed after ${duration}ms`);
+    log.error(`MCP action failed after ${duration}ms`, { duration, error: errorObj.message });
     return { status: "error", error: { code: -32003, message: errorObj.message || `Failed to execute action ${actionName}.` } };
   }
 }
@@ -284,5 +290,237 @@ export async function getProviderTools(providerId: string) {
   if (!provider) return [];
   // Return tool metadata safely
   return provider.getTools();
+}
+
+// ── INTEGRATION WORKSPACE ACTIONS ──
+
+export interface WorkspaceIntegration {
+  id: string;
+  provider: string;
+  name: string;
+  email: string;
+  connected: boolean;
+  status: string;
+  sync_status: string;
+  last_error: string | null;
+  scopes: string;
+  last_sync_at: string;
+  connected_at: string;
+  expires_at: string;
+  metadata: Record<string, unknown>;
+  settings: {
+    auto_sync: boolean;
+    notifications: boolean;
+    background_sync: boolean;
+    token_refresh: boolean;
+  };
+}
+
+const DEFAULT_SYNC_TOOL: Record<string, string> = {
+  gmail: "gmail_search_emails",
+  slack: "slack_fetch_messages",
+  whatsapp: "whatsapp_fetch_messages",
+  telegram: "telegram_fetch_messages",
+  discord: "discord_fetch_recent_messages",
+  github: "github_get_notifications",
+  linkedin: "linkedin_get_profile",
+};
+
+const DEFAULT_SYNC_ARGS: Record<string, Record<string, unknown>> = {
+  gmail: { query: "is:unread", limit: 5 },
+  slack: { limit: 5 },
+  whatsapp: { limit: 10 },
+  telegram: { limit: 5 },
+  discord: { limit: 3 },
+  github: {},
+  linkedin: {},
+};
+
+function mapToWorkspace(record: IntegrationRecord, name: string): WorkspaceIntegration {
+  const settings = getRepo().getSettings(record);
+  return {
+    id: record.id || `${record.provider}_${record.user_id}`,
+    provider: record.provider,
+    name,
+    email: record.email || record.provider_account_id || "",
+    connected: record.connected !== false && record.status === "active",
+    status: record.status,
+    sync_status: record.sync_status || "idle",
+    last_error: record.last_error || null,
+    scopes: record.scopes || "",
+    last_sync_at: record.last_sync_at || "",
+    connected_at: record.created_at || "",
+    expires_at: record.expires_at || "",
+    metadata: record.metadata || {},
+    settings,
+  };
+}
+
+export async function getAllIntegrations(userId: string): Promise<WorkspaceIntegration[]> {
+  try {
+    const repo = getRepo();
+    const records = await repo.findAllByUser(userId);
+    return records.map((r) => mapToWorkspace(r, IntegrationRegistry.get(r.provider)?.name || r.provider));
+  } catch (e) {
+    console.error("Failed to load all integrations:", e);
+    return [];
+  }
+}
+
+export async function getIntegration(userId: string, providerId: string): Promise<WorkspaceIntegration | null> {
+  try {
+    const record = await getRepo().findByUserAndProvider(userId, providerId);
+    if (!record) return null;
+    return mapToWorkspace(record, IntegrationRegistry.get(providerId)?.name || providerId);
+  } catch (e) {
+    console.error(`Failed to load integration ${providerId}:`, e);
+    return null;
+  }
+}
+
+export async function refreshToken(userId: string, providerId: string) {
+  const repo = getRepo();
+  const started = Date.now();
+  try {
+    const provider = IntegrationRegistry.get(providerId);
+    if (!provider) return { success: false, error: `Provider ${providerId} not found.` };
+
+    const record = await repo.findByUserAndProvider(userId, providerId);
+    if (!record) return { success: false, error: "Connection not found. Reconnect first." };
+    if (!record.encrypted_refresh_token) return { success: false, error: "No refresh token stored for this provider." };
+
+    const refreshTokenPlain = repo.decryptToken(record.encrypted_refresh_token);
+    if (!refreshTokenPlain) return { success: false, error: "Refresh token is corrupted. Reconnect your account." };
+
+    await repo.setSyncStatus(userId, providerId, "syncing");
+    const refreshed = await provider.refreshAccess(refreshTokenPlain);
+    if (!refreshed.accessToken) return { success: false, error: "Token refresh returned empty. Reconnect your account." };
+
+    await repo.saveToken(userId, providerId, refreshed.accessToken, refreshTokenPlain, refreshed.expiresIn);
+    await repo.addSyncLog({
+      user_id: userId,
+      provider: providerId,
+      status: "refresh",
+      message: "Access token refreshed successfully.",
+      duration_ms: Date.now() - started,
+    });
+
+    return { success: true, expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000).toISOString() };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Token refresh failed.";
+    await repo.setSyncStatus(userId, providerId, "error", msg);
+    await repo.addSyncLog({ user_id: userId, provider: providerId, status: "error", message: msg, duration_ms: Date.now() - started });
+    return { success: false, error: msg };
+  }
+}
+
+export async function syncIntegration(userId: string, providerId: string) {
+  const repo = getRepo();
+  const started = Date.now();
+  try {
+    const provider = IntegrationRegistry.get(providerId);
+    if (!provider) return { success: false, error: `Provider ${providerId} not found.` };
+
+    const record = await repo.findByUserAndProvider(userId, providerId);
+    if (!record) return { success: false, error: "Connection not found. Reconnect first." };
+
+    await repo.setSyncStatus(userId, providerId, "syncing");
+
+    // Refresh token first if close to expiry.
+    const expiresAt = new Date(record.expires_at || "").getTime();
+    if (expiresAt && Date.now() >= expiresAt - 60_000 && record.encrypted_refresh_token) {
+      await refreshToken(userId, providerId);
+    }
+
+    const refreshedRecord = await repo.findByUserAndProvider(userId, providerId);
+    let accessToken = refreshedRecord ? repo.decryptToken(refreshedRecord.encrypted_access_token) : null;
+    if (!accessToken) return { success: false, error: "Access token is corrupted. Reconnect your account." };
+
+    const tool = DEFAULT_SYNC_TOOL[providerId];
+    const args = DEFAULT_SYNC_ARGS[providerId] || {};
+
+    const result = tool
+      ? await provider.executeTool(accessToken, tool, args)
+      : await provider.getProfile(accessToken);
+
+    await repo.setSyncStatus(userId, providerId, "success");
+    await repo.addSyncLog({
+      user_id: userId,
+      provider: providerId,
+      status: "success",
+      message: tool ? `Sync completed via ${tool}.` : "Profile sync completed.",
+      metadata: { itemCount: Array.isArray(result) ? result.length : undefined },
+      duration_ms: Date.now() - started,
+    });
+
+    return { success: true, syncedAt: new Date().toISOString(), result };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Sync failed.";
+    await repo.setSyncStatus(userId, providerId, "error", msg);
+    await repo.addSyncLog({ user_id: userId, provider: providerId, status: "error", message: msg, duration_ms: Date.now() - started });
+    return { success: false, error: msg };
+  }
+}
+
+export async function reconnectIntegration(userId: string, providerId: string) {
+  try {
+    await disconnectConnection(userId, providerId);
+    return { success: true, needsOAuth: !!IntegrationRegistry.get(providerId)?.scopes.length, provider: providerId };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Reconnect failed.";
+    return { success: false, error: msg };
+  }
+}
+
+export async function updateIntegrationSettings(
+  userId: string,
+  providerId: string,
+  settings: { auto_sync?: boolean; notifications?: boolean; background_sync?: boolean; token_refresh?: boolean }
+) {
+  try {
+    return await getRepo().updateSettings(userId, providerId, settings);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Failed to update settings.";
+    return { success: false, error: msg };
+  }
+}
+
+export async function getIntegrationLogs(userId: string, providerId: string, limit = 15) {
+  try {
+    return await getRepo().getSyncLogs(userId, providerId, limit);
+  } catch {
+    return [];
+  }
+}
+
+// ── ZOD-VALIDATED ACTION NAMES ──
+// Thin, validated facades over the shared logic above. Keep the action
+// surface the UI imports from, validate untrusted client input.
+
+export async function connectIntegration(userId: string, providerId: string) {
+  const parsed = connectIntegrationSchema.safeParse({ userId, providerId });
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0]?.message || "Invalid input." };
+  return { success: true, provider: parsed.data.providerId };
+}
+
+export async function disconnectIntegration(userId: string, providerId: string) {
+  const parsed = disconnectIntegrationSchema.safeParse({ userId, providerId });
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0]?.message || "Invalid input." };
+  try {
+    return await disconnectConnection(parsed.data.userId, parsed.data.providerId);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Disconnect failed.";
+    return { success: false, error: msg };
+  }
+}
+
+export async function deleteIntegration(userId: string, providerId: string) {
+  return disconnectIntegration(userId, providerId);
+}
+
+export async function refreshIntegrationToken(userId: string, providerId: string) {
+  const parsed = refreshTokenSchema.safeParse({ userId, providerId });
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0]?.message || "Invalid input." };
+  return refreshToken(parsed.data.userId, parsed.data.providerId);
 }
 
