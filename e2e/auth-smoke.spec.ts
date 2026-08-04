@@ -34,6 +34,6 @@ test.describe("Auth smoke tests", () => {
   test("forgot-password page renders email form", async ({ page }) => {
     await page.goto("/forgot-password");
     await expect(page.getByLabel("Your email")).toBeVisible();
-    await expect(page.getByRole("button", { name: /send reset link/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /send verification code/i })).toBeVisible();
   });
 });

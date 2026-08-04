@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import Link from "next/link";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { sendResetPasswordEmailAction } from "@/app/actions";
 import { validateEmail } from "@/lib/validation/auth";
 import { Button } from "@/components/ui/button";
@@ -12,12 +13,12 @@ const RESEND_COOLDOWN_SECONDS = 60;
 const COOLDOWN_KEY = "syncra-reset-cooldown-until";
 
 export default function ForgotPasswordPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
   const [formError, setFormError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSent, setIsSent] = useState(false);
-  const [cooldownLeft, setCooldownLeft] = useState(0);
   const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const readCooldown = useCallback((): number => {
@@ -26,9 +27,7 @@ export default function ForgotPasswordPage() {
     return Math.max(0, Math.ceil((until - Date.now()) / 1000));
   }, []);
 
-  useEffect(() => {
-    setCooldownLeft(readCooldown());
-  }, [readCooldown]);
+  const [cooldownLeft, setCooldownLeft] = useState(readCooldown);
 
   useEffect(() => {
     return () => {
@@ -53,7 +52,7 @@ export default function ForgotPasswordPage() {
     }, 1000);
   }, []);
 
-  const handleSendLink = async (e: React.FormEvent) => {
+  const handleSendCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
 
@@ -63,10 +62,7 @@ export default function ForgotPasswordPage() {
 
     setIsLoading(true);
     try {
-      const redirectTo = `${window.location.origin}/reset-password`;
-      const { error } = await sendResetPasswordEmailAction(email, redirectTo);
-      // Enumeration-safe: show the same confirmation whether or not the account
-      // exists. Log the real server response for ops only.
+      const { error } = await sendResetPasswordEmailAction(email);
       if (error) {
         console.error("sendResetPasswordEmailAction failed:", error);
       }
@@ -84,9 +80,13 @@ export default function ForgotPasswordPage() {
 
   const handleResend = async () => {
     if (cooldownLeft > 0 || isLoading) return;
-    await handleSendLink({
+    await handleSendCode({
       preventDefault: () => {},
     } as React.FormEvent);
+  };
+
+  const handleContinue = () => {
+    router.push(`/reset-password-code?email=${encodeURIComponent(email)}`);
   };
 
   if (isSent) {
@@ -101,10 +101,10 @@ export default function ForgotPasswordPage() {
               Check your inbox
             </h1>
             <p className="text-text-slate text-[14px] mt-2 font-medium">
-              We&apos;ve sent a password reset link to{" "}
+              We&apos;ve sent a 6-digit verification code to{" "}
               <span className="font-bold text-secondary">{email}</span>.
               <br />
-              If you don&apos;t see it, check your spam folder.
+              Enter this code on the next screen.
             </p>
           </div>
 
@@ -129,10 +129,18 @@ export default function ForgotPasswordPage() {
               : "Resend email"}
           </Button>
 
+          <Button
+            onClick={handleContinue}
+            className="w-full mt-4"
+          >
+            Continue
+            <ArrowRight className="w-5 h-5 ml-2" />
+          </Button>
+
           <p className="text-center text-[14px] font-medium text-slate-500 mt-6">
-            <Link href="/sign-in" className="font-bold text-[#4f46e5] hover:underline">
+            <a href="/sign-in" className="font-bold text-[#4f46e5] hover:underline">
               Back to sign in
-            </Link>
+            </a>
           </p>
         </Card>
       </div>
@@ -143,16 +151,16 @@ export default function ForgotPasswordPage() {
     <div className="min-h-screen flex items-center justify-center bg-[#f3f3fd] p-4 font-sans">
       <Card className="w-full max-w-md p-8">
         <div className="mb-6">
-          <img src="/logo.png" alt="Syncra Logo" className="w-8 h-8 object-contain mb-4" />
+          <Image src="/logo.png" alt="Syncra Logo" className="w-8 h-8 object-contain mb-4" width={32} height={32} />
           <h1 className="font-display font-bold text-[24px] text-secondary tracking-tight">
             Forgot your password?
           </h1>
           <p className="text-text-slate text-[14px] mt-1 font-medium">
-            Enter your email and we&apos;ll send you a reset link.
+            Enter your email and we&apos;ll send you a 6-digit verification code.
           </p>
         </div>
 
-        <form onSubmit={handleSendLink} className="space-y-5" noValidate>
+        <form onSubmit={handleSendCode} className="space-y-5" noValidate>
           <div className="space-y-1.5">
             <label htmlFor="email" className="block text-[14px] font-bold text-secondary">
               Your email
@@ -184,16 +192,16 @@ export default function ForgotPasswordPage() {
           </div>
 
           <Button type="submit" disabled={isLoading} className="w-full">
-            {isLoading ? "Sending..." : "Send reset link"}
+            {isLoading ? "Sending..." : "Send verification code"}
             {!isLoading && <ArrowRight className="w-5 h-5" />}
           </Button>
         </form>
 
         <p className="text-center text-[14px] font-medium text-slate-500 mt-6">
           Remembered it?{" "}
-          <Link href="/sign-in" className="font-bold text-[#4f46e5] hover:underline">
+          <a href="/sign-in" className="font-bold text-[#4f46e5] hover:underline">
             Back to sign in
-          </Link>
+          </a>
         </p>
       </Card>
     </div>

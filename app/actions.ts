@@ -118,12 +118,20 @@ export async function resendVerificationEmailAction(email: string, redirectTo?: 
   return await client.auth.resendVerificationEmail({ email, redirectTo });
 }
 
-export async function sendResetPasswordEmailAction(email: string, redirectTo?: string) {
+export async function sendResetPasswordEmailAction(email: string) {
   const client = createServerClient({
     ...AUTH_CONFIG,
     cookies: await cookies(),
   });
-  return await client.auth.sendResetPasswordEmail({ email, redirectTo });
+  return await client.auth.sendResetPasswordEmail({ email });
+}
+
+export async function exchangeResetPasswordTokenAction(email: string, code: string) {
+  const client = createServerClient({
+    ...AUTH_CONFIG,
+    cookies: await cookies(),
+  });
+  return await client.auth.exchangeResetPasswordToken({ email, code });
 }
 
 export async function resetPasswordAction(newPassword: string, otp: string) {
