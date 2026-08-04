@@ -5,12 +5,13 @@ import { BriefingsRepository, BriefingScheduleRecord } from "@/lib/repositories/
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
 import { BriefingService, calculateNextRun } from "@/lib/services/briefing-service";
 import { executeMCPAction, getConnectionStatus } from "@/app/actions/integrations";
+import { requireOwnership } from "@/lib/auth-guard";
 import OpenAI from "openai";
 
 // Helper to authenticate user from cookies
 async function verifyUserAccess(userId: string) {
-  // Simple validation to ensure requests are secure and match the context
-  if (!userId) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) {
     throw new Error("Unauthorized user access");
   }
 }

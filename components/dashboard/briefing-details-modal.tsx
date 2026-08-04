@@ -141,8 +141,8 @@ export function BriefingDetailsModal({ isOpen, onClose, item, onItemUpdated }: B
       const repo = metadata.repo || metadata.repository;
       if (!issueNumber || !repo) throw new Error("Missing issue/PR number or repository metadata.");
 
-      const { executeMCPAction } = await import("@/app/actions/integrations");
-      const res = await executeMCPAction(activeUserId, "github", "github_add_comment", {
+      const { executeMCPActionGuarded } = await import("@/app/actions/integrations");
+      const res = await executeMCPActionGuarded(activeUserId, "github", "github_add_comment", {
         repo, issueNumber: parseInt(issueNumber), body: replyText,
       });
       if (res.status === "success") {
@@ -166,11 +166,11 @@ export function BriefingDetailsModal({ isOpen, onClose, item, onItemUpdated }: B
     setIsLiking(true);
     setErrorMessage(null);
     try {
-      const { executeMCPAction } = await import("@/app/actions/integrations");
+      const { executeMCPActionGuarded } = await import("@/app/actions/integrations");
       const postId = metadata.postId || item.source_id;
       if (!postId) throw new Error("Missing post ID.");
 
-      const res = await executeMCPAction(activeUserId, "linkedin", "linkedin_like_post", { postId });
+      const res = await executeMCPActionGuarded(activeUserId, "linkedin", "linkedin_like_post", { postId });
       if (res.status === "success") {
         setReplySuccess(true);
         setTimeout(() => setReplySuccess(false), 2000);

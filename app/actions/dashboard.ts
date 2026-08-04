@@ -2,6 +2,7 @@
 
 import { executeMCPAction } from "./integrations";
 import { generateJsonResponse } from "@/lib/ai-service";
+import { requireOwnership } from "@/lib/auth-guard";
 
 export interface DashboardBriefData {
   importantCount: number;
@@ -189,6 +190,8 @@ function buildBriefFromData(platformData: Record<string, { items: Record<string,
 
 export async function generateDashboardBrief(userId: string, connectedPlatforms: string[]): Promise<DashboardBriefData | null> {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return null;
     const platformData: Record<string, { items: Record<string, unknown>[]; error?: string }> = {};
     const activePlatforms = connectedPlatforms.filter(p => ALL_PROVIDERS.includes(p as any));
 

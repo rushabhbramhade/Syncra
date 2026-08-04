@@ -1,11 +1,14 @@
 "use server";
 
 import { ToolPermissionsRepository } from "@/lib/repositories/tool-permissions-repository";
+import { requireOwnership } from "@/lib/auth-guard";
 import { PLATFORM_MCP_TOOLS } from "@/constants/mcp-tools";
 
 const repo = new ToolPermissionsRepository();
 
 export async function getToolPermissionsAction(userId: string): Promise<Record<string, boolean>> {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) throw new Error("Unauthorized user access");
   const perms = await repo.getAllForUser(userId);
   const result: Record<string, boolean> = {};
   for (const p of perms) {
@@ -15,11 +18,15 @@ export async function getToolPermissionsAction(userId: string): Promise<Record<s
 }
 
 export async function setToolEnabledAction(userId: string, toolName: string, provider: string, enabled: boolean): Promise<{ success: boolean }> {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) throw new Error("Unauthorized user access");
   await repo.setEnabled(userId, toolName, provider, enabled);
   return { success: true };
 }
 
 export async function initializeToolPermissionsAction(userId: string): Promise<void> {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) throw new Error("Unauthorized user access");
   const tools: { name: string; provider: string }[] = [];
   for (const [provider, providerTools] of Object.entries(PLATFORM_MCP_TOOLS)) {
     for (const tool of providerTools) {

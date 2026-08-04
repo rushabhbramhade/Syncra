@@ -5,7 +5,7 @@ import {
   getAllIntegrations,
   syncIntegration,
   refreshToken,
-  disconnectConnection,
+  disconnectIntegration,
   reconnectIntegration,
   updateIntegrationSettings,
 } from "@/app/actions/integrations";
@@ -49,7 +49,7 @@ export function useIntegrations(userId: string | undefined) {
   // Realtime: refresh status when the SSE dashboard stream emits integration events.
   useEffect(() => {
     if (!userId) return;
-    const es = new EventSource(`/api/dashboard/stream?userId=${userId}`);
+    const es = new EventSource("/api/dashboard/stream");
     es.onmessage = (msg) => {
       try {
         const event = JSON.parse(msg.data) as { type?: string };
@@ -94,7 +94,7 @@ export function useIntegrations(userId: string | undefined) {
   }, [userId, optimisticPatch]);
 
   const disconnect = useCallback(async (provider: string) => {
-    await disconnectConnection(userId!, provider);
+    await disconnectIntegration(userId!, provider);
     setIntegrations((prev) => prev.filter((i) => i.provider !== provider));
     return { success: true };
   }, [userId]);

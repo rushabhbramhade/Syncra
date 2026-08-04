@@ -3,10 +3,11 @@
 import { IntegrationRegistry } from "@/lib/integrations";
 import { DiscordProvider } from "@/lib/integrations/discord-provider";
 import { DiscordService } from "@/lib/discord/discord-service";
-import { TelegramService } from "@/lib/telegram/telegram-service";
+import { TelegramService, telegramWebhookSecret } from "@/lib/telegram/telegram-service";
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
 import type { IntegrationRecord } from "@/lib/repositories/integrations-repository";
 import { createAdminDb } from "@/lib/db";
+import { requireOwnership } from "@/lib/auth-guard";
 import { logger, getCorrelationId } from "@/lib/logger";
 import { ToolPermissionsRepository } from "@/lib/repositories/tool-permissions-repository";
 import {
@@ -29,6 +30,8 @@ export interface ConnectionStatus {
 }
 
 export async function getConnectionStatus(userId: string, providerId: string): Promise<ConnectionStatus | null> {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) return null;
   try {
     return await getRepo().getConnectionStatus(userId, providerId);
   } catch (e) {
@@ -163,6 +166,16 @@ export async function executeMCPAction(userId: string, providerId: string, actio
   }
 }
 
+// Browser-facing MCP executor with ownership verification. Server-side callers
+// (briefing-service, search-service) must keep using the unguarded executeMCPAction.
+export async function executeMCPActionGuarded(userId: string, providerId: string, actionName: string, args: Record<string, unknown>) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) {
+    return { status: "error", error: { code: -32003, message: "Access denied" } };
+  }
+  return executeMCPAction(userId, providerId, actionName, args);
+}
+
 // ── BACKWARD COMPATIBLE GMAIL SPECIFIC WRAPPERS ──
 
 export async function getGmailConnectionStatus(userId: string) {
@@ -180,6 +193,8 @@ export async function saveGmailConnection(
 }
 
 export async function disconnectGmailConnection(userId: string) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) return { success: false, error: guard.error };
   return disconnectConnection(userId, "gmail");
 }
 
@@ -199,6 +214,8 @@ export async function checkGoogleApiConfig() {
 
 export async function connectTelegramAction(userId: string, botToken: string) {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return { success: false, error: guard.error };
     const provider = IntegrationRegistry.get("telegram");
     if (!provider) return { success: false, error: "Telegram provider not registered." };
     const botInfo = await provider.getProfile(botToken);
@@ -210,7 +227,8 @@ export async function connectTelegramAction(userId: string, botToken: string) {
         console.log("[Telegram] Dev mode — webhook skipped, using long polling");
       } else {
         const webhookUrl = `${baseUrl}/api/telegram-webhook?userId=${userId}`;
-        await TelegramService.setWebhook(botToken, webhookUrl);
+        const secret = telegramWebhookSecret(botToken, userId);
+        await TelegramService.setWebhook(botToken, webhookUrl, secret);
       }
     } catch {
       console.warn("[Telegram] Webhook setup failed");
@@ -225,6 +243,8 @@ export async function connectTelegramAction(userId: string, botToken: string) {
 
 export async function disconnectTelegramWebhookAction(userId: string) {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return { success: false, error: guard.error };
     const repo = getRepo();
     const record = await repo.findByUserAndProvider(userId, "telegram");
     if (!record) return { success: true };
@@ -244,6 +264,8 @@ export async function disconnectTelegramWebhookAction(userId: string) {
 
 export async function connectDiscordAction(userId: string) {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return { success: false, error: guard.error };
     const provider = IntegrationRegistry.get("discord") as DiscordProvider | undefined;
     if (!provider) return { success: false, error: "Discord provider not registered." };
 
@@ -275,12 +297,16 @@ export async function getDiscordInviteUrlAction() {
 // ── LINKEDIN SPECIFIC WRAPPERS ──
 
 export async function disconnectLinkedinAction(userId: string) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) return { success: false, error: guard.error };
   return disconnectConnection(userId, "linkedin");
 }
 
 // ── GITHUB SPECIFIC WRAPPERS ──
 
 export async function disconnectGithubAction(userId: string) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) return { success: false, error: guard.error };
   return disconnectConnection(userId, "github");
 }
 
@@ -300,6 +326,7 @@ export interface WorkspaceIntegration {
   name: string;
   email: string;
   connected: boolean;
+  has_refresh_token: boolean;
   status: string;
   sync_status: string;
   last_error: string | null;
@@ -344,6 +371,7 @@ function mapToWorkspace(record: IntegrationRecord, name: string): WorkspaceInteg
     name,
     email: record.email || record.provider_account_id || "",
     connected: record.connected !== false && record.status === "active",
+    has_refresh_token: !!record.encrypted_refresh_token,
     status: record.status,
     sync_status: record.sync_status || "idle",
     last_error: record.last_error || null,
@@ -358,6 +386,8 @@ function mapToWorkspace(record: IntegrationRecord, name: string): WorkspaceInteg
 
 export async function getAllIntegrations(userId: string): Promise<WorkspaceIntegration[]> {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return [];
     const repo = getRepo();
     const records = await repo.findAllByUser(userId);
     return records.map((r) => mapToWorkspace(r, IntegrationRegistry.get(r.provider)?.name || r.provider));
@@ -369,6 +399,8 @@ export async function getAllIntegrations(userId: string): Promise<WorkspaceInteg
 
 export async function getIntegration(userId: string, providerId: string): Promise<WorkspaceIntegration | null> {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return null;
     const record = await getRepo().findByUserAndProvider(userId, providerId);
     if (!record) return null;
     return mapToWorkspace(record, IntegrationRegistry.get(providerId)?.name || providerId);
@@ -382,6 +414,8 @@ export async function refreshToken(userId: string, providerId: string) {
   const repo = getRepo();
   const started = Date.now();
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return { success: false, error: guard.error };
     const provider = IntegrationRegistry.get(providerId);
     if (!provider) return { success: false, error: `Provider ${providerId} not found.` };
 
@@ -418,6 +452,8 @@ export async function syncIntegration(userId: string, providerId: string) {
   const repo = getRepo();
   const started = Date.now();
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return { success: false, error: guard.error };
     const provider = IntegrationRegistry.get(providerId);
     if (!provider) return { success: false, error: `Provider ${providerId} not found.` };
 
@@ -433,7 +469,7 @@ export async function syncIntegration(userId: string, providerId: string) {
     }
 
     const refreshedRecord = await repo.findByUserAndProvider(userId, providerId);
-    let accessToken = refreshedRecord ? repo.decryptToken(refreshedRecord.encrypted_access_token) : null;
+    const accessToken = refreshedRecord ? repo.decryptToken(refreshedRecord.encrypted_access_token) : null;
     if (!accessToken) return { success: false, error: "Access token is corrupted. Reconnect your account." };
 
     const tool = DEFAULT_SYNC_TOOL[providerId];
@@ -464,6 +500,8 @@ export async function syncIntegration(userId: string, providerId: string) {
 
 export async function reconnectIntegration(userId: string, providerId: string) {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return { success: false, error: guard.error };
     await disconnectConnection(userId, providerId);
     return { success: true, needsOAuth: !!IntegrationRegistry.get(providerId)?.scopes.length, provider: providerId };
   } catch (e: unknown) {
@@ -478,6 +516,8 @@ export async function updateIntegrationSettings(
   settings: { auto_sync?: boolean; notifications?: boolean; background_sync?: boolean; token_refresh?: boolean }
 ) {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return { success: false, error: guard.error };
     return await getRepo().updateSettings(userId, providerId, settings);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to update settings.";
@@ -487,6 +527,8 @@ export async function updateIntegrationSettings(
 
 export async function getIntegrationLogs(userId: string, providerId: string, limit = 15) {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return [];
     return await getRepo().getSyncLogs(userId, providerId, limit);
   } catch {
     return [];
@@ -498,12 +540,16 @@ export async function getIntegrationLogs(userId: string, providerId: string, lim
 // surface the UI imports from, validate untrusted client input.
 
 export async function connectIntegration(userId: string, providerId: string) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) return { success: false, error: guard.error };
   const parsed = connectIntegrationSchema.safeParse({ userId, providerId });
   if (!parsed.success) return { success: false, error: parsed.error.issues[0]?.message || "Invalid input." };
   return { success: true, provider: parsed.data.providerId };
 }
 
 export async function disconnectIntegration(userId: string, providerId: string) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) return { success: false, error: guard.error };
   const parsed = disconnectIntegrationSchema.safeParse({ userId, providerId });
   if (!parsed.success) return { success: false, error: parsed.error.issues[0]?.message || "Invalid input." };
   try {
@@ -519,6 +565,8 @@ export async function deleteIntegration(userId: string, providerId: string) {
 }
 
 export async function refreshIntegrationToken(userId: string, providerId: string) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) return { success: false, error: guard.error };
   const parsed = refreshTokenSchema.safeParse({ userId, providerId });
   if (!parsed.success) return { success: false, error: parsed.error.issues[0]?.message || "Invalid input." };
   return refreshToken(parsed.data.userId, parsed.data.providerId);

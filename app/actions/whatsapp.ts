@@ -2,12 +2,15 @@
 
 import { WhatsAppClientManager } from "@/lib/whatsapp/client";
 import { getConnectionStatus, disconnectConnection } from "./integrations";
+import { requireOwnership } from "@/lib/auth-guard";
 
 /**
  * Initiates the Baileys socket connection and requests a pairing code for the phone number.
  */
 export async function requestWhatsAppPairingCodeAction(userId: string, phoneNumber: string) {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return { success: false, error: guard.error };
     const code = await WhatsAppClientManager.requestPairingCode(userId, phoneNumber);
     return { success: true, pairingCode: code };
   } catch (error: unknown) {
@@ -22,6 +25,8 @@ export async function requestWhatsAppPairingCodeAction(userId: string, phoneNumb
  */
 export async function getWhatsAppStatusAction(userId: string) {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return { success: false, error: guard.error };
     const hasSession = await WhatsAppClientManager.isSessionSaved(userId);
     if (hasSession) {
       // In the background, make sure the connection is initialized and active
@@ -58,6 +63,8 @@ export async function getWhatsAppStatusAction(userId: string) {
  */
 export async function disconnectWhatsAppAction(userId: string) {
   try {
+    const guard = await requireOwnership(userId);
+    if ("error" in guard) return { success: false, error: guard.error };
     await WhatsAppClientManager.disconnect(userId);
     await disconnectConnection(userId, "whatsapp");
     return { success: true };

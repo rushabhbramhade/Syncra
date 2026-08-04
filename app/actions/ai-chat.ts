@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminDb } from "@/lib/db";
+import { requireOwnership } from "@/lib/auth-guard";
 import {
   AIChatRepository,
   AIConversationRecord,
@@ -10,7 +11,8 @@ import {
 
 // Helper to authenticate user
 async function verifyUserAccess(userId: string) {
-  if (!userId) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) {
     throw new Error("Unauthorized user access");
   }
 }

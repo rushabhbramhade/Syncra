@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminDb } from "@/lib/db";
+import { requireOwnership } from "@/lib/auth-guard";
 
 interface ToolCallRecord {
   tool_name: string;
@@ -18,6 +19,8 @@ interface HealthActivity {
 }
 
 export async function getIntegrationHealthAction(userId: string, provider: string): Promise<HealthActivity> {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) throw new Error("Unauthorized user access");
   const db = createAdminDb();
 
   const { data: integration } = await db.database

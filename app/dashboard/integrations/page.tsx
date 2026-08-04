@@ -6,7 +6,7 @@ import { useAuth } from "@/components/auth-provider";
 import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
 import {
   disconnectGmailConnection,
-  disconnectConnection,
+  disconnectIntegration,
   checkGoogleApiConfig,
   getProviderTools,
   connectTelegramAction,
@@ -167,12 +167,12 @@ export default function IntegrationsPage() {
   const handleGmailConnect = useCallback(() => {
     if (!user) return;
     if (!isGoogleConfiguredOnServer) { setShowConfigAlertModal(true); return; }
-    window.location.assign(`/api/google?userId=${user.id}`);
+    window.location.assign("/api/google");
   }, [user, isGoogleConfiguredOnServer]);
 
   const handleOAuthConnect = useCallback((provider: string) => {
     if (!user) return;
-    window.location.assign(`/api/${provider}?userId=${user.id}`);
+    window.location.assign(`/api/${provider}`);
   }, [user]);
 
   const handleTelegramConnect = useCallback(async (botToken: string) => {
@@ -224,7 +224,7 @@ export default function IntegrationsPage() {
         await disconnectWhatsAppAction(user.id);
       } else if (provider === "telegram") {
         await disconnectTelegramWebhookAction(user.id);
-        await disconnectConnection(user.id, "telegram");
+        await disconnectIntegration(user.id, "telegram");
       } else if (provider === "linkedin") {
         await disconnectLinkedinAction(user.id);
       } else if (provider === "github") {
@@ -435,6 +435,7 @@ export default function IntegrationsPage() {
               name: meta.name,
               email: "",
               connected: false,
+              has_refresh_token: false,
               status: "disconnected",
               sync_status: "idle",
               last_error: null,

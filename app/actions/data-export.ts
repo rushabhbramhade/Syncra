@@ -1,8 +1,11 @@
 "use server";
 
 import { createAdminDb } from "@/lib/db";
+import { requireOwnership } from "@/lib/auth-guard";
 
 export async function exportUserDataAction(userId: string) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) throw new Error("Unauthorized user access");
   const db = createAdminDb();
 
   const [integrations, conversations, toolCalls, briefings, notifications] = await Promise.all([
@@ -24,6 +27,8 @@ export async function exportUserDataAction(userId: string) {
 }
 
 export async function disconnectAndDeleteAction(userId: string, provider: string) {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) throw new Error("Unauthorized user access");
   const db = createAdminDb();
 
   await Promise.all([
