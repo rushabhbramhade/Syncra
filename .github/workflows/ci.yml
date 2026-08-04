@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-typecheck:
+    name: Lint + Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Lint reports but does not block: the repo carries ~140 pre-existing
+      # `no-explicit-any` + react-hooks v6 debt. Once cleared, drop continue-on-error.
+      - name: Lint (non-blocking)
+        run: npm run lint
+        continue-on-error: true
+
+  build:
+    name: Build (webpack)
+    runs-on: ubuntu-latest
+    needs: lint-and-typecheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Build with webpack, not Turbopack — known jimp failure in Turbopack.
+      - name: Next.js build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_INSFORGE_BASE_URL: https://example.insforge.app
+          NEXT_PUBLIC_INSFORGE_ANON_KEY: anon_test
+          INSFORGE_API_KEY: ik_test
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          TOKEN_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          OPENROUTER_API_KEY: sk-or-v1-test
+          TRIGGER_SECRET_KEY: tr_test
+          DATABASE_URL: postgresql://postgres:test@localhost:5432/test?sslmode=require
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-build
+          path: .next
+          if-no-files-found: error
+
+  e2e:
+    name: E2E (auth smoke)
+    runs-on: ubuntu-latest
+    needs: build
+    env:
+      NEXT_PUBLIC_INSFORGE_BASE_URL: ${{ vars.NEXT_PUBLIC_INSFORGE_BASE_URL }}
+      NEXT_PUBLIC_INSFORGE_ANON_KEY: ${{ vars.NEXT_PUBLIC_INSFORGE_ANON_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: next-build
+          path: .next
+
+      - run: npx playwright install --with-deps chromium
+
+      # The unauthenticated suite (sign-in/sign-up/reset-password render,
+      # /dashboard redirect) runs without OAuth creds. The authed `chromium`
+      # project (notifications) requires real credentials + a setup login, so
+      # only the `unauthenticated` project is CI-gated.
+      - name: Start server + run auth smoke tests
+        run: |
+          npm run start &
+          for i in $(seq 1 60); do
+            curl -s -o /dev/null http://localhost:3000/sign-in && break
+            sleep 1
+          done
+          npx playwright test --project=unauthenticated
+        env:
+          NEXT_PUBLIC_INSFORGE_BASE_URL: ${{ vars.NEXT_PUBLIC_INSFORGE_BASE_URL }}
+          NEXT_PUBLIC_INSFORGE_ANON_KEY: ${{ vars.NEXT_PUBLIC_INSFORGE_ANON_KEY }}
+          INSFORGE_API_KEY: ${{ secrets.INSFORGE_API_KEY }}
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          TOKEN_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
