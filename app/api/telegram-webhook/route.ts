@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { TelegramService } from "@/lib/telegram/telegram-service";
+import { timingSafeEqual } from "crypto";
+import { telegramWebhookSecret } from "@/lib/telegram/telegram-service";
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
 import { createAdminDb } from "@/lib/db";
 
@@ -11,10 +12,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Missing userId" }, { status: 400 });
     }
 
-    const body = await request.json();
-    const message = body.message;
-    if (!message) {
-      return NextResponse.json({ ok: true });
+    const bodyText = await request.text();
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(bodyText);
+    } catch {
+      return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
     }
 
     const repo = new IntegrationsRepository(createAdminDb());
@@ -28,11 +31,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const chatId = String(message.chat?.id || message.from?.id || "");
-    const text = message.text || "";
-    const username = message.from?.username || "";
-    const firstName = message.from?.first_name || "";
-    const date = new Date(message.date * 1000).toISOString();
+    const expected = telegramWebhookSecret(token, userId);
+    const provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
+    if (
+      provided.length !== expected.length ||
+      !timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
+    ) {
+      return NextResponse.json({ ok: false, error: "Invalid signature" }, { status: 401 });
+    }
+
+    const message = body.message as Record<string, unknown> | undefined;
+    if (!message) {
+      return NextResponse.json({ ok: true });
+    }
+
+    const chatId = String((message.chat as { id?: number } | undefined)?.id || (message.from as { id?: number } | undefined)?.id || "");
+    const text = (message.text as string) || "";
+    const username = (message.from as { username?: string } | undefined)?.username || "";
+    const firstName = (message.from as { first_name?: string } | undefined)?.first_name || "";
+    const date = new Date((message.date as number) * 1000).toISOString();
 
     console.log(`[TelegramWebhook] message from ${username || firstName} (${chatId}): ${text.slice(0, 100)}`);
 

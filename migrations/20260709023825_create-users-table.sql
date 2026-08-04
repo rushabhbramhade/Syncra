@@ -13,8 +13,8 @@ CREATE TABLE users (
 
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow public read access to users table" ON users
-  FOR SELECT USING (true);
+CREATE POLICY "Allow users to read their own profile" ON users
+  FOR SELECT USING (auth.uid() = auth_user_id);
 
 CREATE POLICY "Allow users to update their own profile" ON users
   FOR UPDATE USING (auth.uid() = auth_user_id);

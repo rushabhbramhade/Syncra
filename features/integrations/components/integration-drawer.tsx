@@ -114,7 +114,7 @@ export function IntegrationDrawer({
   const meta = getProviderMeta(integration.provider);
   const connected = integration.connected;
   const listedScopes = integration.scopes ? integration.scopes.split(" ").filter(Boolean) : [];
-  const hasRefresh = connected;
+  const hasRefresh = connected && integration.has_refresh_token;
   const logsLoading = logsState.provider !== integration.provider;
   const logs = logsState.provider === integration.provider ? logsState.logs : [];
   const expired = logsState.expired;
@@ -293,7 +293,7 @@ export function IntegrationDrawer({
                     {operatingAction === "sync" ? "Syncing..." : "Sync Now"}
                   </button>
                 )}
-                {connected && (
+                {connected && hasRefresh && (
                   <button
                     onClick={onRefreshToken}
                     disabled={isOperating}

@@ -1,6 +1,15 @@
+import { createHmac } from "crypto";
 import { fetchWithRetry } from "@/lib/api-retry";
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
+
+/**
+ * Derive the per-connection webhook secret sent to Telegram as secret_token.
+ * Deterministic: the route recomputes it from the stored bot token + userId.
+ */
+export function telegramWebhookSecret(botToken: string, userId: string): string {
+  return createHmac("sha256", botToken).update(`syncra-telegram-webhook:${userId}`).digest("hex");
+}
 
 export interface TelegramBotInfo {
   id: number;
@@ -55,11 +64,11 @@ export class TelegramService {
     }));
   }
 
-  static async setWebhook(token: string, url: string): Promise<void> {
+  static async setWebhook(token: string, url: string, secretToken?: string): Promise<void> {
     const res = await fetchWithRetry(`${TELEGRAM_API_BASE}/bot${token}/setWebhook`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, ...(secretToken ? { secret_token: secretToken } : {}) }),
     });
     const data = await res.json();
     if (!data.ok) {

@@ -5,6 +5,7 @@ import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
 export class DiscordProvider implements IntegrationProvider {
   id = "discord";
   name = "Discord";
+  tokensExpire = false;
   scopes: string[] = [];
 
   getAuthUrl(_origin: string, _state?: string): string {

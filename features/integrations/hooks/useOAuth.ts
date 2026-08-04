@@ -20,7 +20,7 @@ export function useOAuth() {
   const startOAuth = useCallback((provider: string, userId: string): { needsModal: boolean; url: string | null } => {
     const route = OAUTH_ROUTES[provider];
     if (!route) return { needsModal: true, url: null };
-    const url = `${route}?userId=${encodeURIComponent(userId)}`;
+    const url = route;
     window.location.assign(url);
     return { needsModal: false, url };
   }, []);

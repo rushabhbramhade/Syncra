@@ -56,9 +56,10 @@ export const integrationMaintenance = schedules.task({
       const expiresAt = row.expires_at ? new Date(row.expires_at as string).getTime() : 0;
 
       try {
-        // 1. Refresh tokens that are expired or close to expiry.
+        // 1. Refresh tokens that are expired or close to expiry. Skip
+        // providers whose tokens don't expire (GitHub, bot tokens, etc.)
         const expired = !expiresAt || Date.now() >= expiresAt - 60_000;
-        if (expired && tokenRefresh) {
+        if (expired && tokenRefresh && provider.tokensExpire !== false) {
           if (row.encrypted_refresh_token) {
             const refreshTokenPlain = repo.decryptToken(row.encrypted_refresh_token as string);
             if (refreshTokenPlain) {

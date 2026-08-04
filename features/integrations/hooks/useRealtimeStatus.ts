@@ -15,7 +15,7 @@ export function useRealtimeStatus(userId: string | undefined) {
 
   useEffect(() => {
     if (!userId) return;
-    const es = new EventSource(`/api/dashboard/stream?userId=${userId}`);
+    const es = new EventSource("/api/dashboard/stream");
     esRef.current = es;
     es.onopen = () => setState("open");
     es.onerror = () => setState("closed");

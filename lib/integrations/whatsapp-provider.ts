@@ -5,6 +5,7 @@ import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
 export class WhatsAppProvider implements IntegrationProvider {
   id = "whatsapp";
   name = "WhatsApp";
+  tokensExpire = false;
   scopes = [];
 
   getAuthUrl(_origin: string, _state?: string): string {

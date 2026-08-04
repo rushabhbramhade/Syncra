@@ -2,15 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCanonicalOrigin } from "@/lib/oauth";
 import { signState } from "@/lib/oauth-state";
 import { SlackApiService } from "@/lib/integrations/slack-provider";
+import { getAuthenticatedUser } from "@/lib/auth-guard";
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
-      return new NextResponse("Unauthorized. Missing userId parameter.", { status: 401 });
+    const session = await getAuthenticatedUser();
+    if ("error" in session) {
+      return new NextResponse("Unauthorized.", { status: 401 });
     }
+    const userId = session.user.id;
 
     if (!process.env.SLACK_CLIENT_ID || !process.env.SLACK_CLIENT_SECRET) {
       return NextResponse.redirect(new URL("/dashboard/integrations?error=missing_credentials", request.url));

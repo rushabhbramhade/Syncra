@@ -2,7 +2,14 @@ import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 
-const connectionString = "postgresql://postgres:285554db63178390c9b959f6728a85ab@b7fawddm.ap-southeast.database.insforge.app:5432/insforge?sslmode=require";
+process.loadEnvFile(".env.local");
+
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  console.error("DATABASE_URL must be set in .env.local");
+  process.exit(1);
+}
+
 const migrationsDir = './migrations';
 
 async function main() {

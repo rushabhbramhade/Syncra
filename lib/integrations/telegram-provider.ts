@@ -5,6 +5,7 @@ import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
 export class TelegramProvider implements IntegrationProvider {
   id = "telegram";
   name = "Telegram";
+  tokensExpire = false;
   scopes: string[] = [];
 
   getAuthUrl(_origin: string, _state?: string): string {

@@ -14,7 +14,7 @@ export function useDashboardStream(userId: string | undefined) {
 
   useEffect(() => {
     if (!userId) return;
-    const es = new EventSource(`/api/dashboard/stream?userId=${userId}`);
+    const es = new EventSource("/api/dashboard/stream");
     eventSourceRef.current = es;
     setIsConnected(true);
 

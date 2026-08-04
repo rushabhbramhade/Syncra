@@ -1,8 +1,17 @@
 import { createAdminClient } from "@insforge/sdk";
 
+process.loadEnvFile(".env.local");
+
+const baseUrl = process.env.NEXT_PUBLIC_INSFORGE_BASE_URL;
+const apiKey = process.env.INSFORGE_API_KEY;
+if (!baseUrl || !apiKey) {
+  console.error("NEXT_PUBLIC_INSFORGE_BASE_URL and INSFORGE_API_KEY must be set in .env.local");
+  process.exit(1);
+}
+
 const db = createAdminClient({
-  baseUrl: "https://b7fawddm.ap-southeast.insforge.app",
-  apiKey: "ik_7d1b58067449560d15c4c04e74deab23",
+  baseUrl,
+  apiKey,
   timeout: 10000,
 });
 

@@ -6,8 +6,5 @@ import "./discord-provider";
 import "./linkedin-provider";
 import "./calendar-provider";
 import "./github-provider";
-import "./outlook-provider";
-import "./notion-provider";
-import "./linear-provider";
 
 export * from "./provider-base";

@@ -16,6 +16,11 @@ export interface IntegrationProvider {
   name: string;
   scopes: string[];
 
+  // Whether this provider issues expiring access tokens that need refreshing.
+  // Providers with non-expiring tokens (e.g. GitHub) are skipped by the
+  // hourly token-expiry maintenance job instead of being marked "expired".
+  tokensExpire?: boolean;
+
   // OAuth flow
   getAuthUrl(origin: string, state?: string): string;
   exchangeCode(code: string, origin: string): Promise<AuthTokens>;

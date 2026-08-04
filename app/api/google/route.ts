@@ -2,17 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { IntegrationRegistry } from "@/lib/integrations";
 import { getRedirectUri } from "@/lib/oauth";
 import { signState } from "@/lib/oauth-state";
+import { getAuthenticatedUser } from "@/lib/auth-guard";
 
 const OAUTH_LOG_PREFIX = "[GmailOAuth]";
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
-      return new NextResponse("Unauthorized. Missing userId parameter.", { status: 401 });
+    const session = await getAuthenticatedUser();
+    if ("error" in session) {
+      return new NextResponse("Unauthorized.", { status: 401 });
     }
+    const userId = session.user.id;
 
     const provider = IntegrationRegistry.get("gmail");
     if (!provider) {

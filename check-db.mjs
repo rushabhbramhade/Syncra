@@ -1,6 +1,12 @@
 import pg from 'pg';
 
-const connectionString = "postgresql://postgres:285554db63178390c9b959f6728a85ab@b7fawddm.ap-southeast.database.insforge.app:5432/insforge?sslmode=require";
+process.loadEnvFile(".env.local");
+
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  console.error("DATABASE_URL must be set in .env.local");
+  process.exit(1);
+}
 
 async function main() {
   const client = new pg.Client({ connectionString });

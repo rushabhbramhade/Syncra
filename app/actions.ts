@@ -118,6 +118,22 @@ export async function resendVerificationEmailAction(email: string, redirectTo?: 
   return await client.auth.resendVerificationEmail({ email, redirectTo });
 }
 
+export async function sendResetPasswordEmailAction(email: string, redirectTo?: string) {
+  const client = createServerClient({
+    ...AUTH_CONFIG,
+    cookies: await cookies(),
+  });
+  return await client.auth.sendResetPasswordEmail({ email, redirectTo });
+}
+
+export async function resetPasswordAction(newPassword: string, otp: string) {
+  const client = createServerClient({
+    ...AUTH_CONFIG,
+    cookies: await cookies(),
+  });
+  return await client.auth.resetPassword({ newPassword, otp });
+}
+
 export async function signInWithGoogleAction(redirectTo: string) {
   const auth = createAuthActions({
     ...AUTH_CONFIG,

@@ -58,7 +58,14 @@ export async function GET(request: NextRequest) {
 
     cookieStore.delete("insforge_code_verifier");
 
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    const pendingRedirect = cookieStore.get("syncra_redirect")?.value;
+    cookieStore.delete("syncra_redirect");
+    let redirectPath = "/dashboard";
+    if (pendingRedirect && pendingRedirect.startsWith("/") && !pendingRedirect.startsWith("//") && !pendingRedirect.includes("://")) {
+      redirectPath = pendingRedirect;
+    }
+
+    return NextResponse.redirect(new URL(redirectPath, request.url));
   } catch (err: unknown) {
     const errorObj = err as { message?: string };
     console.error("OAuth callback error:", err);

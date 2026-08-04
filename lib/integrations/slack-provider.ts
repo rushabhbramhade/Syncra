@@ -141,6 +141,7 @@ export class SlackApiService {
 export class SlackProvider implements IntegrationProvider {
   id = "slack";
   name = "Slack";
+  tokensExpire = false;
   scopes = [
     "channels:read",
     "channels:history",

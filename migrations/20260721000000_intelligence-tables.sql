@@ -195,82 +195,8 @@ EXCEPTION WHEN others THEN
     NULL;
 END $$;
 
--- 8. SERVICE ROLE POLICIES (admin bypass for all new tables)
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE tablename = 'user_rules' AND policyname = 'Service role can read user_rules'
-    ) THEN
-        CREATE POLICY "Service role can read user_rules"
-            ON user_rules FOR SELECT USING (true);
-        CREATE POLICY "Service role can write user_rules"
-            ON user_rules FOR INSERT WITH CHECK (true);
-        CREATE POLICY "Service role can update user_rules"
-            ON user_rules FOR UPDATE USING (true) WITH CHECK (true);
-        CREATE POLICY "Service role can delete user_rules"
-            ON user_rules FOR DELETE USING (true);
-    END IF;
+-- 8. (removed) Service-role policies: previously created policies with
+--    USING (true) and no TO role scope, which opened every new table to all
+--    anon/authenticated users. Redundant — the admin client bypasses RLS.
+--    Per-user auth.uid() policies above remain.
 
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE tablename = 'user_feedback' AND policyname = 'Service role can read user_feedback'
-    ) THEN
-        CREATE POLICY "Service role can read user_feedback"
-            ON user_feedback FOR SELECT USING (true);
-        CREATE POLICY "Service role can write user_feedback"
-            ON user_feedback FOR INSERT WITH CHECK (true);
-        CREATE POLICY "Service role can delete user_feedback"
-            ON user_feedback FOR DELETE USING (true);
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE tablename = 'classification_audit' AND policyname = 'Service role can read classification_audit'
-    ) THEN
-        CREATE POLICY "Service role can read classification_audit"
-            ON classification_audit FOR SELECT USING (true);
-        CREATE POLICY "Service role can write classification_audit"
-            ON classification_audit FOR INSERT WITH CHECK (true);
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE tablename = 'ai_decision_log' AND policyname = 'Service role can read ai_decision_log'
-    ) THEN
-        CREATE POLICY "Service role can read ai_decision_log"
-            ON ai_decision_log FOR SELECT USING (true);
-        CREATE POLICY "Service role can write ai_decision_log"
-            ON ai_decision_log FOR INSERT WITH CHECK (true);
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE tablename = 'user_dashboard_layout' AND policyname = 'Service role can read user_dashboard_layout'
-    ) THEN
-        CREATE POLICY "Service role can read user_dashboard_layout"
-            ON user_dashboard_layout FOR SELECT USING (true);
-        CREATE POLICY "Service role can write user_dashboard_layout"
-            ON user_dashboard_layout FOR INSERT WITH CHECK (true);
-        CREATE POLICY "Service role can update user_dashboard_layout"
-            ON user_dashboard_layout FOR UPDATE USING (true) WITH CHECK (true);
-        CREATE POLICY "Service role can delete user_dashboard_layout"
-            ON user_dashboard_layout FOR DELETE USING (true);
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE tablename = 'ai_user_memory' AND policyname = 'Service role can read ai_user_memory'
-    ) THEN
-        CREATE POLICY "Service role can read ai_user_memory"
-            ON ai_user_memory FOR SELECT USING (true);
-        CREATE POLICY "Service role can write ai_user_memory"
-            ON ai_user_memory FOR INSERT WITH CHECK (true);
-        CREATE POLICY "Service role can update ai_user_memory"
-            ON ai_user_memory FOR UPDATE USING (true) WITH CHECK (true);
-        CREATE POLICY "Service role can delete ai_user_memory"
-            ON ai_user_memory FOR DELETE USING (true);
-    END IF;
-EXCEPTION WHEN others THEN
-    NULL;
-END $$;

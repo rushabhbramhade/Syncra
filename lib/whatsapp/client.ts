@@ -7,6 +7,7 @@ import makeWASocket, {
   DisconnectReason,
   BufferJSON,
   initAuthCreds,
+  fetchLatestWaWebVersion,
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 import path from "path";
@@ -144,11 +145,18 @@ export class WhatsAppClientManager {
 
     const { state, saveCreds } = await useDBAuthState(userId);
 
+    // Pin the live web version; the bundled default goes stale and WhatsApp
+    // kills the session with 405 (client_too_old).
+    const { version: waVersion } = await fetchLatestWaWebVersion().catch(() => ({
+      version: undefined,
+    }));
+
     const sock = makeWASocket({
       auth: state,
       logger: pino({ level: "silent" }) as any,
       printQRInTerminal: false,
       browser: ["Windows", "Chrome", "20.0.04"],
+      version: waVersion,
     });
 
     sock.ev.on("creds.update", saveCreds);
@@ -256,6 +264,12 @@ export class WhatsAppClientManager {
     // Create a fresh auth state (initAuthCreds ensures no stale creds.me)
     const { state, saveCreds } = await useDBAuthState(userId);
 
+    // WhatsApp rejects clients running an expired web version with a 405
+    // "client_too_old" failure. Fetch the current version instead of pinning.
+    const { version: waVersion } = await fetchLatestWaWebVersion().catch(() => ({
+      version: undefined,
+    }));
+
     const sock = makeWASocket({
       auth: state,
       logger: pino({ level: "debug", name: "baileys-pairing" }) as any,
@@ -266,7 +280,7 @@ export class WhatsAppClientManager {
       keepAliveIntervalMs: 45000,
       retryRequestDelayMs: 500,
       waWebSocketUrl: "wss://web.whatsapp.com/ws/chat",
-      version: [2, 3000, 1035194821],
+      version: waVersion,
     });
 
     // After pair-success the server sends stream:error (515) → connection close.

@@ -6,6 +6,7 @@ export class GitHubProvider implements IntegrationProvider {
   id = "github";
   name = "GitHub";
   scopes = ["public_repo", "read:user", "notifications"];
+  tokensExpire = false;
 
   private getClientId(): string {
     const id = process.env.GITHUB_CLIENT_ID;
