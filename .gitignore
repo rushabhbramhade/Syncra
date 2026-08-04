@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -66,5 +67,8 @@ lib/google/gmail-connections.json
 /test-*.js
 /verify-flows.js
 /app/api/auth/
+/test-results/
+/playwright-report/
 
 .trigger
+.gstack/
