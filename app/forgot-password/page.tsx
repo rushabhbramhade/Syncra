@@ -66,7 +66,8 @@ export default function ForgotPasswordPage() {
       if (error) {
         const errObj = error as { message?: string; error?: string };
         const msg = errObj.message || "";
-        if (msg.includes("wait") || msg.includes("rate") || msg.includes("too many")) {
+        const lower = msg.toLowerCase();
+        if (lower.includes("wait") || lower.includes("rate") || lower.includes("too many")) {
           setFormError("Too many requests. Please wait a moment and try again.");
           setIsLoading(false);
           return;
