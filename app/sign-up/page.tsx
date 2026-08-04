@@ -2,9 +2,11 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 import { signUpAction, signInWithGoogleAction } from "@/app/actions";
+import { validateEmail, validatePassword } from "@/lib/validation/auth";
 import { ArrowRight, AlertCircle, Eye, EyeOff, CheckCircle } from "lucide-react";
 
 export default function SignUp() {
@@ -44,34 +46,6 @@ export default function SignUp() {
     return "";
   };
 
-  const validateEmail = (val: string) => {
-    if (!val) {
-      return "Email is required";
-    }
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(val)) {
-      return "Please enter a valid email address";
-    }
-    return "";
-  };
-
-  const validatePassword = (val: string) => {
-    if (!val) {
-      return "Password is required";
-    }
-    if (val.length < 8) {
-      return "Password must be at least 8 characters";
-    }
-    // Check complexity
-    const hasNumber = /\d/.test(val);
-    const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(val);
-    if (!hasNumber || !hasSpecial) {
-      return "Include at least one number and one special character";
-    }
-    return "";
-  };
-
-  // Blur handlers
   const handleNameBlur = () => {
     setNameTouched(true);
     setNameError(validateName(name));
@@ -215,7 +189,7 @@ export default function SignUp() {
         >
           {/* Syncra Logo in white */}
           <div>
-            <img src="/logo.png" alt="Syncra Logo" className="w-8 h-8 object-contain" />
+            <Image src="/logo.png" alt="Syncra Logo" width={32} height={32} className="w-8 h-8 object-contain" />
           </div>
 
           {/* Editorial Headline */}
@@ -227,7 +201,7 @@ export default function SignUp() {
           
           {/* Syncra Logo */}
           <div className="mb-4">
-            <img src="/logo.png" alt="Syncra Logo" className="w-8 h-8 object-contain" />
+            <Image src="/logo.png" alt="Syncra Logo" width={32} height={32} className="w-8 h-8 object-contain" />
           </div>
 
           <h1 className="font-display font-bold text-[28px] text-secondary tracking-tight mb-2">

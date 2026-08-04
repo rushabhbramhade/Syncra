@@ -2,9 +2,11 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 import { signInAction, signInWithGoogleAction } from "@/app/actions";
+import { validateEmail } from "@/lib/validation/auth";
 import { ArrowRight, AlertCircle, Eye, EyeOff } from "lucide-react";
 
 export default function SignIn() {
@@ -27,25 +29,20 @@ export default function SignIn() {
   // Middleware handles redirection if the user is already authenticated.
 
   // Client-side validations
-  const validateEmail = (val: string) => {
-    if (!val) {
-      return "Email is required";
-    }
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(val)) {
-      return "Please enter a valid email address";
-    }
-    return "";
-  };
-
   const validatePassword = (val: string) => {
     if (!val) {
       return "Password is required";
     }
-    if (val.length < 6) {
-      return "Password must be at least 6 characters";
-    }
     return "";
+  };
+
+  const getRedirectPath = () => {
+    if (typeof window === "undefined") return "/dashboard";
+    const redirect = new URLSearchParams(window.location.search).get("redirect");
+    if (redirect && redirect.startsWith("/") && !redirect.startsWith("//") && !redirect.includes("://")) {
+      return redirect;
+    }
+    return "/dashboard";
   };
 
   // Blur handlers
@@ -114,7 +111,7 @@ export default function SignIn() {
         if (typeof window !== "undefined") {
           localStorage.setItem("syncra-user-session", JSON.stringify(data.user));
         }
-        router.push("/dashboard");
+        router.push(getRedirectPath());
       } else {
         setFormError("An unexpected error occurred during sign in.");
       }
@@ -139,6 +136,10 @@ export default function SignIn() {
         setFormError(result.error.message || "Failed to initialize Google Sign-In.");
         setIsOAuthLoading(false);
       } else if (result && result.redirectUrl) {
+        const redirect = getRedirectPath();
+        if (redirect !== "/dashboard") {
+          document.cookie = `syncra_redirect=${encodeURIComponent(redirect)}; path=/; max-age=600; SameSite=Lax`;
+        }
         window.location.href = result.redirectUrl;
       }
     } catch (err: unknown) {
@@ -164,7 +165,7 @@ export default function SignIn() {
         >
           {/* Syncra Logo in white */}
           <div>
-            <img src="/logo.png" alt="Syncra Logo" className="w-8 h-8 object-contain" />
+            <Image src="/logo.png" alt="Syncra Logo" width={32} height={32} className="w-8 h-8 object-contain" />
           </div>
         </div>
 
@@ -173,7 +174,7 @@ export default function SignIn() {
           
           {/* Syncra Logo */}
           <div className="mb-4">
-            <img src="/logo.png" alt="Syncra Logo" className="w-8 h-8 object-contain" />
+            <Image src="/logo.png" alt="Syncra Logo" width={32} height={32} className="w-8 h-8 object-contain" />
           </div>
 
           <h1 className="font-display font-bold text-[28px] text-secondary tracking-tight mb-2">
@@ -231,7 +232,7 @@ export default function SignIn() {
                   Password
                 </label>
                 <Link
-                  href="/reset-password"
+                  href="/forgot-password"
                   className="text-[13px] font-bold text-[#4f46e5] hover:underline outline-none"
                 >
                   Forgot?
