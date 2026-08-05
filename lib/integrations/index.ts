@@ -8,3 +8,6 @@ import "./calendar-provider";
 import "./github-provider";
 
 export * from "./provider-base";
+export * from "./types";
+export * from "./constants";
+export * from "./capabilities";

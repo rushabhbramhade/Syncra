@@ -3,3 +3,4 @@ export type { RawEvent } from "./normalizer";
 export { normalizeEvent, normalizeAll, registerNormalizer } from "./normalizer";
 export { deduplicate, mergeDedupedEvents } from "./deduplicator";
 export { correlateEvents, applyCorrelations } from "./correlator";
+export * from "./contracts";
