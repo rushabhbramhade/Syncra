@@ -65,19 +65,6 @@ export function verifyState(state: string, expectedRedirectUri?: string): string
   return result?.userId || null;
 }
 
-const consumedStates = new Set<string>();
-
-export function consumeState(state: string): boolean {
-  const dotIndex = state.lastIndexOf(".");
-  if (dotIndex === -1) return false;
-  const payload = state.substring(0, dotIndex);
-  const key = payload;
-  if (consumedStates.has(key)) return false;
-  consumedStates.add(key);
-  setTimeout(() => consumedStates.delete(key), STATE_TTL_MS);
-  return true;
-}
-
 export function setOAuthStateCookie(state: string): string {
   const isHttps = process.env.NODE_ENV === "production" ||
     (process.env.NEXT_PUBLIC_APP_URL || "").startsWith("https");
