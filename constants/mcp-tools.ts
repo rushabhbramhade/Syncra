@@ -324,6 +324,282 @@ export const PLATFORM_MCP_TOOLS: Record<string, MCPTool[]> = {
         { name: "message", label: "Message", type: "textarea", placeholder: "Hello group!", required: true },
       ],
     },
+    {
+      name: "whatsapp_reply_message",
+      displayName: "Reply to Message",
+      description: "Reply to a specific WhatsApp message.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "WhatsApp JID of the chat." },
+          messageId: { type: "string", description: "ID of the message to reply to." },
+          message: { type: "string", description: "Reply text." },
+        },
+        required: ["to", "messageId", "message"],
+      },
+      arguments: [
+        { name: "to", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+        { name: "messageId", label: "Message ID", type: "string", placeholder: "BAE5...", required: true },
+        { name: "message", label: "Reply Text", type: "textarea", placeholder: "Thanks for your message!", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_list_contacts",
+      displayName: "List Contacts",
+      description: "Retrieve all WhatsApp contacts.",
+      inputSchema: { type: "object", properties: {} },
+      arguments: [],
+    },
+    {
+      name: "whatsapp_create_group",
+      displayName: "Create Group",
+      description: "Create a new WhatsApp group.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Group name." },
+          participants: { type: "array", items: { type: "string" }, description: "List of JIDs to add." },
+        },
+        required: ["name", "participants"],
+      },
+      arguments: [
+        { name: "name", label: "Group Name", type: "string", placeholder: "My Group", required: true },
+        { name: "participants", label: "Participants", type: "textarea", placeholder: "1234567890@s.whatsapp.net,0987654321@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_manage_group_participants",
+      displayName: "Manage Group Participants",
+      description: "Add or remove participants from a WhatsApp group.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          groupId: { type: "string", description: "Group JID." },
+          action: { type: "string", enum: ["add", "remove"], description: "Action to perform." },
+          participants: { type: "array", items: { type: "string" }, description: "List of JIDs." },
+        },
+        required: ["groupId", "action", "participants"],
+      },
+      arguments: [
+        { name: "groupId", label: "Group JID", type: "string", placeholder: "1112223333@g.us", required: true },
+        { name: "action", label: "Action", type: "string", placeholder: "add or remove", required: true },
+        { name: "participants", label: "Participants", type: "textarea", placeholder: "1234567890@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_retrieve_media",
+      displayName: "Retrieve Media",
+      description: "Get media content from a WhatsApp message.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          messageId: { type: "string", description: "Message ID containing media." },
+          chatId: { type: "string", description: "Chat JID." },
+        },
+        required: ["messageId", "chatId"],
+      },
+      arguments: [
+        { name: "messageId", label: "Message ID", type: "string", placeholder: "BAE5...", required: true },
+        { name: "chatId", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_download_attachment",
+      displayName: "Download Attachment",
+      description: "Download an attachment from a WhatsApp message.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          messageId: { type: "string", description: "Message ID." },
+          chatId: { type: "string", description: "Chat JID." },
+        },
+        required: ["messageId", "chatId"],
+      },
+      arguments: [
+        { name: "messageId", label: "Message ID", type: "string", placeholder: "BAE5...", required: true },
+        { name: "chatId", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_send_image",
+      displayName: "Send Image",
+      description: "Send an image message to a WhatsApp chat.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "WhatsApp JID." },
+          imageUrl: { type: "string", description: "URL of the image." },
+          caption: { type: "string", description: "Image caption." },
+        },
+        required: ["to", "imageUrl"],
+      },
+      arguments: [
+        { name: "to", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+        { name: "imageUrl", label: "Image URL", type: "string", placeholder: "https://example.com/image.jpg", required: true },
+        { name: "caption", label: "Caption", type: "textarea", placeholder: "Check this out!" },
+      ],
+    },
+    {
+      name: "whatsapp_send_document",
+      displayName: "Send Document",
+      description: "Send a document file to a WhatsApp chat.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "WhatsApp JID." },
+          documentUrl: { type: "string", description: "URL of the document." },
+          fileName: { type: "string", description: "File name." },
+        },
+        required: ["to", "documentUrl", "fileName"],
+      },
+      arguments: [
+        { name: "to", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+        { name: "documentUrl", label: "Document URL", type: "string", placeholder: "https://example.com/file.pdf", required: true },
+        { name: "fileName", label: "File Name", type: "string", placeholder: "document.pdf", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_send_audio",
+      displayName: "Send Audio",
+      description: "Send an audio message to a WhatsApp chat.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "WhatsApp JID." },
+          audioUrl: { type: "string", description: "URL of the audio file." },
+        },
+        required: ["to", "audioUrl"],
+      },
+      arguments: [
+        { name: "to", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+        { name: "audioUrl", label: "Audio URL", type: "string", placeholder: "https://example.com/audio.mp3", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_send_video",
+      displayName: "Send Video",
+      description: "Send a video message to a WhatsApp chat.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "WhatsApp JID." },
+          videoUrl: { type: "string", description: "URL of the video." },
+          caption: { type: "string", description: "Video caption." },
+        },
+        required: ["to", "videoUrl"],
+      },
+      arguments: [
+        { name: "to", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+        { name: "videoUrl", label: "Video URL", type: "string", placeholder: "https://example.com/video.mp4", required: true },
+        { name: "caption", label: "Caption", type: "textarea", placeholder: "Check this video!" },
+      ],
+    },
+    {
+      name: "whatsapp_search_messages",
+      displayName: "Search Messages",
+      description: "Search for messages across all WhatsApp chats.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search term." },
+          chatId: { type: "string", description: "Optional: limit to specific chat." },
+        },
+        required: ["query"],
+      },
+      arguments: [
+        { name: "query", label: "Search Term", type: "string", placeholder: "meeting", required: true },
+        { name: "chatId", label: "Chat JID (optional)", type: "string", placeholder: "1234567890@s.whatsapp.net" },
+      ],
+    },
+    {
+      name: "whatsapp_get_unread_chats",
+      displayName: "Get Unread Chats",
+      description: "Retrieve all WhatsApp chats with unread messages.",
+      inputSchema: { type: "object", properties: {} },
+      arguments: [],
+    },
+    {
+      name: "whatsapp_mark_chat_read",
+      displayName: "Mark Chat as Read",
+      description: "Mark a WhatsApp chat as read.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          chatId: { type: "string", description: "Chat JID to mark as read." },
+        },
+        required: ["chatId"],
+      },
+      arguments: [
+        { name: "chatId", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_archive_chat",
+      displayName: "Archive Chat",
+      description: "Archive a WhatsApp chat.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          chatId: { type: "string", description: "Chat JID to archive." },
+        },
+        required: ["chatId"],
+      },
+      arguments: [
+        { name: "chatId", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_pin_chat",
+      displayName: "Pin Chat",
+      description: "Pin a WhatsApp chat to the top.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          chatId: { type: "string", description: "Chat JID to pin." },
+        },
+        required: ["chatId"],
+      },
+      arguments: [
+        { name: "chatId", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_unpin_chat",
+      displayName: "Unpin Chat",
+      description: "Unpin a WhatsApp chat.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          chatId: { type: "string", description: "Chat JID to unpin." },
+        },
+        required: ["chatId"],
+      },
+      arguments: [
+        { name: "chatId", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_get_chat_metadata",
+      displayName: "Get Chat Metadata",
+      description: "Retrieve metadata for a WhatsApp chat.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          chatId: { type: "string", description: "Chat JID." },
+        },
+        required: ["chatId"],
+      },
+      arguments: [
+        { name: "chatId", label: "Chat JID", type: "string", placeholder: "1234567890@s.whatsapp.net", required: true },
+      ],
+    },
+    {
+      name: "whatsapp_monitor_messages",
+      displayName: "Monitor Messages",
+      description: "Set up real-time monitoring for new incoming WhatsApp messages.",
+      inputSchema: { type: "object", properties: {} },
+      arguments: [],
+    },
   ],
   discord: [
     {

@@ -1,5 +1,8 @@
 import { IntegrationProvider, AuthTokens, IntegrationProfile, IntegrationRegistry } from "./provider-base";
 import { TelegramService } from "@/lib/telegram/telegram-service";
+import { getRecentMessages } from "@/lib/repositories/unified-store-repository";
+import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
+import { createAdminDb } from "@/lib/db";
 import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
 
 export class TelegramProvider implements IntegrationProvider {
@@ -36,7 +39,12 @@ export class TelegramProvider implements IntegrationProvider {
     return PLATFORM_MCP_TOOLS[this.id] || [];
   }
 
-  async executeTool(accessToken: string, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+  async executeTool(
+    accessToken: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    ctx?: { userId?: string }
+  ): Promise<unknown> {
     switch (toolName) {
       case "telegram_send_message":
         return await TelegramService.sendMessage(
@@ -45,10 +53,28 @@ export class TelegramProvider implements IntegrationProvider {
           args.text as string
         );
       case "telegram_fetch_messages":
-        return await TelegramService.getUpdates(accessToken, (args.limit as number) || 5);
+        return await this.fetchMessages(accessToken, (args.limit as number) || 5, ctx?.userId);
       default:
         throw new Error(`Tool not supported: ${toolName}`);
     }
+  }
+
+  /** Prefer persisted webhook messages (they're the only durable Telegram
+   *  ingress); fall back to the one-shot getUpdates queue (dev / no webhook). */
+  private async fetchMessages(accessToken: string, limit: number, userId?: string): Promise<unknown[]> {
+    if (userId) {
+      try {
+        const repo = new IntegrationsRepository(createAdminDb());
+        const record = await repo.findByUserAndProvider(userId, "telegram");
+        if (record?.id) {
+          const stored = await getRecentMessages(userId, record.id, limit);
+          if (stored.length > 0) return stored;
+        }
+      } catch (err) {
+        console.warn("[Telegram] fetch from store failed, falling back to getUpdates", err);
+      }
+    }
+    return TelegramService.getUpdates(accessToken, limit);
   }
 }
 

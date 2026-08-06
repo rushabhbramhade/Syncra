@@ -91,7 +91,7 @@ export const integrationMaintenance = schedules.task({
         const args = SYNC_ARGS[providerId] || {};
         const started = Date.now();
         const result = tool
-          ? await provider.executeTool(accessToken, tool, args)
+          ? await provider.executeTool(accessToken, tool, args, { userId })
           : await provider.getProfile(accessToken);
 
         await repo.setSyncStatus(userId, providerId, "success");

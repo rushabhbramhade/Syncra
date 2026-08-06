@@ -6,8 +6,11 @@ import { useAuth } from "@/components/auth-provider";
 import { signOutAction } from "@/app/actions";
 import { generateDashboardBrief, DashboardBriefData } from "@/app/actions/dashboard";
 import {
+  getBriefingsAction,
+  getBriefingItemsAction,
   generateBriefingAction
 } from "@/app/actions/briefing";
+import type { BriefingRecord, BriefingItemRecord } from "@/lib/repositories/briefings-repository";
 import {
   Mail, Inbox, MessageCircle, WifiOff
 } from "lucide-react";
@@ -16,6 +19,7 @@ import { StatsOverview } from "@/components/dashboard/stats-overview";
 import { DashboardBriefSection } from "@/components/dashboard/dashboard-brief-section";
 import { ConnectedAppsGrid } from "@/components/dashboard/connected-apps-grid";
 import { PriorityItemsCard } from "@/components/dashboard/priority-items-card";
+import type { BriefingIntelligenceContent } from "@/lib/briefing-intelligence";
 
 
 interface ExtendedBriefData extends DashboardBriefData {
@@ -23,6 +27,40 @@ interface ExtendedBriefData extends DashboardBriefData {
   title?: string;
   generatedAt?: string;
   id?: string;
+  providerHealth?: Record<string, unknown> | null;
+}
+
+// Map a stored briefing row + items into the dashboard card shape. This is the
+// single source of truth (same data the "By All" page shows), so "Generate Now"
+// visibly refreshes the General Workspace Update card.
+function mapBriefingToCard(briefing: BriefingRecord, items: BriefingItemRecord[]): ExtendedBriefData {
+  const itemsInOrder = items.filter(i => i.status !== "completed").slice(0, 10);
+  const highInt = itemsInOrder.filter(i => i.priority === "high");
+  const followUps = itemsInOrder.filter(i => i.category === "followUps");
+  const meta = (i: BriefingItemRecord) => (i.metadata || {}) as Record<string, string | undefined>;
+  return {
+    title: briefing.title,
+    generatedAt: briefing.generated_at,
+    executiveSummary: briefing.executive_summary,
+    id: briefing.id,
+    importantCount: briefing.priority_score || itemsInOrder.length,
+    priorityCount: highInt.length,
+    followUpsCount: followUps.length,
+    briefItems: itemsInOrder.slice(0, 5).map(i => ({
+      platform: i.platform,
+      text: meta(i).shortSummary || meta(i).title || i.category,
+      category: i.category,
+    })),
+    priorityItems: highInt.slice(0, 5).map(i => ({
+      platform: i.platform,
+      title: meta(i).title || meta(i).shortSummary || "Priority item",
+      time: new Date(i.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      description: meta(i).shortSummary || meta(i).title || "",
+      priority: "High",
+    })),
+    intelligence: (briefing.full_content as BriefingIntelligenceContent) || undefined,
+    providerHealth: briefing.provider_health || undefined,
+  };
 }
 
 export default function Dashboard() {
@@ -57,7 +95,7 @@ export default function Dashboard() {
 
     try {
       const { getConnectionStatus } = await import("@/app/actions/integrations");
-      const providerIds = ["gmail", "slack", "telegram", "whatsapp"];
+      const providerIds = ["gmail", "outlook", "slack", "whatsapp", "telegram", "discord", "linkedin", "github", "calendar", "notion", "linear"];
       const results = await Promise.allSettled(
         providerIds.map(id => getConnectionStatus(authUserId, id))
       );
@@ -72,11 +110,27 @@ export default function Dashboard() {
 
       const finalPlatforms = apps.filter(a => a.connected).map(a => a.id);
 
-      const data = await generateDashboardBrief(authUserId, finalPlatforms);
-      if (data) {
-        setBriefData(data);
-      } else if (finalPlatforms.length > 0) {
-        setDataError("Unable to load dashboard data from your connected platforms. Please try again.");
+      // Prefer the latest stored briefing (same source as the By All page) so
+      // the card shows enriched intelligence + a generated-at timestamp, and so
+      // "Generate Now" visibly updates it. Fall back to a live fetch only when
+      // no stored briefing exists yet.
+      const briefs = await getBriefingsAction(activeUserId, { limit: 1 });
+      const latest = briefs && briefs.length > 0 ? briefs[0] : null;
+      if (latest) {
+        let items: BriefingItemRecord[] = [];
+        try {
+          items = await getBriefingItemsAction(activeUserId, latest.id!);
+        } catch {
+          items = [];
+        }
+        setBriefData(mapBriefingToCard(latest, items));
+      } else {
+        const data = await generateDashboardBrief(authUserId, finalPlatforms);
+        if (data) {
+          setBriefData(data);
+        } else if (finalPlatforms.length > 0) {
+          setDataError("Unable to load dashboard data from your connected platforms. Please try again.");
+        }
       }
     } catch (e) {
       console.error("Failed to load dashboard data:", e);
@@ -99,17 +153,32 @@ export default function Dashboard() {
       } else {
         throw new Error(res.error || "Generation returned failure");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Manual brief generation error:", err);
-      setDataError(err.message || "Failed to generate briefing. Please try again.");
+      setDataError(err instanceof Error ? err.message : "Failed to generate briefing. Please try again.");
       setIsBriefLoading(false);
     }
   };
 
   useEffect(() => {
     if (user && isDbReady) {
-      loadDashboardData();
+      const t = setTimeout(loadDashboardData, 0);
+      return () => clearTimeout(t);
     }
+  }, [user, isDbReady, loadDashboardData]);
+
+  // Live refresh: when an integration connects/disconnects, reload so
+  // counters, AI health, and brief reflect the new state immediately.
+  useEffect(() => {
+    if (!user || !isDbReady) return;
+    const es = new EventSource("/api/dashboard/stream");
+    es.onmessage = (msg) => {
+      try {
+        const event = JSON.parse(msg.data) as { type?: string };
+        if (event.type === "connection.updated") loadDashboardData();
+      } catch {}
+    };
+    return () => es.close();
   }, [user, isDbReady, loadDashboardData]);
 
   const handleSignOut = async () => {
@@ -204,6 +273,8 @@ export default function Dashboard() {
             briefId={briefData?.id}
             isLoading={isBriefLoading}
             renderPlatformIcon={renderAppIcon}
+            intelligence={briefData?.intelligence}
+            providerHealth={briefData?.providerHealth}
           />
           <ConnectedAppsGrid connectedApps={connectedApps} />
         </div>

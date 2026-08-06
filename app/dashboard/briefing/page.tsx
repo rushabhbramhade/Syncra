@@ -25,7 +25,7 @@ const SendMessageDialog = dynamic(() => import("@/components/dashboard/briefing/
 type TabName = "today" | "schedules" | "history";
 
 const TABS: { key: TabName; label: string }[] = [
-  { key: "today", label: "Today" },
+  { key: "today", label: "By All" },
   { key: "schedules", label: "Schedules" },
   { key: "history", label: "History" },
 ];
@@ -112,9 +112,13 @@ export default function BriefingDashboard() {
     try {
       const result = await generateBriefingAction(activeUserId, null);
       if (result.success) {
-        setFeedbackSuccess("AI Briefing generated successfully!");
+        if (result.empty) {
+          setFeedbackError("No data available yet. Connect Gmail, Slack, GitHub, WhatsApp, Discord, or Telegram to start generating AI briefings.");
+        } else {
+          setFeedbackSuccess("AI Briefing generated successfully!");
+        }
         await loadBriefingData();
-        setTimeout(() => setFeedbackSuccess(null), 3000);
+        setTimeout(() => { setFeedbackSuccess(null); setFeedbackError(null); }, 3000);
       } else {
         throw new Error(result.error || "Generation failed");
       }
@@ -165,9 +169,13 @@ export default function BriefingDashboard() {
     try {
       const result = await generateBriefingAction(activeUserId, scheduleId);
       if (result.success) {
-        setFeedbackSuccess("Briefing generated for this schedule!");
+        if (result.empty) {
+          setFeedbackError("No data available from this schedule's integrations yet. Connect platforms to start generating briefings.");
+        } else {
+          setFeedbackSuccess("Briefing generated for this schedule!");
+        }
         await loadBriefingData();
-        setTimeout(() => setFeedbackSuccess(null), 3000);
+        setTimeout(() => { setFeedbackSuccess(null); setFeedbackError(null); }, 3000);
       } else {
         throw new Error(result.error || "Generation failed");
       }

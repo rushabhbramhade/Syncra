@@ -93,10 +93,18 @@ export function useIntegrations(userId: string | undefined) {
     return res;
   }, [userId, optimisticPatch]);
 
-  const disconnect = useCallback(async (provider: string) => {
-    await disconnectIntegration(userId!, provider);
-    setIntegrations((prev) => prev.filter((i) => i.provider !== provider));
-    return { success: true };
+  const disconnect = useCallback(async (provider: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = (await disconnectIntegration(userId!, provider)) as { success: boolean; error?: string };
+      if (res.success) {
+        setIntegrations((prev) => prev.filter((i) => i.provider !== provider));
+        return { success: true };
+      }
+      return { success: false, error: res.error ?? "Disconnect failed." };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Disconnect failed.";
+      return { success: false, error: msg };
+    }
   }, [userId]);
 
   const reconnect = useCallback(async (provider: string) => {

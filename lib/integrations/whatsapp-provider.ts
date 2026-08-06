@@ -2,6 +2,16 @@ import { IntegrationProvider, AuthTokens, IntegrationProfile, IntegrationRegistr
 import { WhatsAppClientManager } from "@/lib/whatsapp/client";
 import { PLATFORM_MCP_TOOLS, MCPTool } from "@/constants/mcp-tools";
 
+// Tools backed purely by the local message cache. When the integration is not
+// fully ready these return empty (never stale data); other tools throw instead.
+const CACHE_BACKED_TOOLS = new Set([
+  "whatsapp_fetch_messages",
+  "whatsapp_read_chat",
+  "whatsapp_search_chats",
+  "whatsapp_summarize_chat",
+  "whatsapp_fetch_group_messages",
+]);
+
 export class WhatsAppProvider implements IntegrationProvider {
   id = "whatsapp";
   name = "WhatsApp";
@@ -34,6 +44,21 @@ export class WhatsAppProvider implements IntegrationProvider {
       : "";
     if (!userId) {
       throw new Error("Invalid WhatsApp session token.");
+    }
+
+    // Single source of truth: no tool (and no cache read) runs until the whole
+    // integration is ready — auth + open socket + valid session + completed
+    // initial sync + last sync succeeded. Cache is a performance layer only.
+    const state = await WhatsAppClientManager.getConnectionState(userId);
+    if (!state.ready) {
+      if (CACHE_BACKED_TOOLS.has(toolName)) {
+        // Return empty, not stale/fabricated data. Callers (briefing, dashboard,
+        // search) fall back to their own empty state.
+        return toolName === "whatsapp_summarize_chat"
+          ? { summary: "WhatsApp integration is not fully synced.", messageCount: 0 }
+          : [];
+      }
+      throw new Error("WhatsApp integration is not fully ready (auth, socket, or sync incomplete).");
     }
 
     const sock = await WhatsAppClientManager.getClient(userId);
@@ -87,6 +112,8 @@ export class WhatsAppProvider implements IntegrationProvider {
       }
       case "whatsapp_get_contact": {
         const jid = args.jid as string;
+        // ponytail: no contact store is wired, so this derives a placeholder from
+        // the jid. Gated on readiness above so it never serves while unsynced.
         return {
           jid,
           name: jid.split("@")[0],

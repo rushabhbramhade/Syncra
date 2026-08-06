@@ -1,10 +1,27 @@
 import { createAdminDb } from "@/lib/db";
-import { BriefingsRepository, BriefingRecord, BriefingItemRecord } from "@/lib/repositories/briefings-repository";
+import { BriefingsRepository } from "@/lib/repositories/briefings-repository";
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
+import { UsersRepository } from "@/lib/repositories/users-repository";
+import { getUnifiedStoreRepo } from "@/lib/repositories/unified-store-repository";
 import { executeMCPAction } from "@/app/actions/integrations";
 import { generateJsonResponse } from "@/lib/ai-service";
 import { publishEvent } from "@/lib/notifications/events";
 import { BRIEFING_CATEGORIES } from "@/lib/constants/briefing-categories";
+import { logger, getCorrelationId } from "@/lib/logger";
+import {
+  normalizeResult,
+  aiShapeForProvider,
+  countItems,
+  emptyHealth,
+  computeQuality,
+  buildManifest,
+  buildCoverageItems,
+  filterGroundedItems,
+  classifyProviderStatus,
+  type ProviderHealth,
+  type ProviderHealthReport,
+} from "@/lib/briefing/pipeline";
+import type { NormalizedEntity } from "@/lib/integrations/types";
 
 export interface AIResponseBriefing {
   title: string;
@@ -21,7 +38,22 @@ export interface AIResponseBriefing {
     followUps?: { summary: string; items: Array<{ title: string; recommendedAction: string; dueDate?: string }> };
     activity?: { summary: string; items: Array<{ platform: string; type: string; title: string; url?: string }> };
   };
-  recommendations: Array<{ text: string; type: string; platform?: string; sourceId?: string }>;
+  recommendations: Array<{
+    text: string;
+    type: string;
+    platform?: string;
+    sourceId?: string;
+    priority?: "high" | "medium" | "low";
+    reason?: string;
+    confidence?: number;
+    affectedPlatforms?: string[];
+    relatedData?: string[];
+  }>;
+  goals?: Array<{
+    text: string;
+    priority: "high" | "medium" | "low";
+    reason?: string;
+  }>;
   items: Array<{
     platform: string;
     category: string;
@@ -33,7 +65,52 @@ export interface AIResponseBriefing {
     correlationKey?: string;
     from?: string;
     to?: string;
+    reasoning?: string;
   }>;
+  health?: {
+    overall: number;
+    breakdown: Array<{ name: string; score: number; reason: string }>;
+    summary: string;
+  };
+  insights?: Array<{
+    text: string;
+    type: "pattern" | "warning" | "opportunity" | "concept";
+    importance: "high" | "medium" | "low";
+  }>;
+  relationships?: Array<{
+    title: string;
+    summary: string;
+    platforms: string[];
+    items: Array<{ platform: string; title: string }>;
+  }>;
+  timeline?: Array<{
+    time: string;
+    title: string;
+    platform?: string;
+  }>;
+  confidence?: {
+    overall: number;
+    reason: string;
+    missingData: string[];
+  };
+  sourceStats?: Array<{
+    platform: string;
+    syncStatus: "ok" | "partial" | "error" | "skipped";
+    itemsProcessed: number;
+    lastSync?: string;
+  }>;
+}
+
+/** True when the fetched raw context contains at least one real data item. */
+function hasRealData(raw: Record<string, unknown>): boolean {
+  for (const value of Object.values(raw)) {
+    if (Array.isArray(value)) {
+      if (value.length > 0) return true;
+    } else if (value && typeof value === "object") {
+      if (hasRealData(value as Record<string, unknown>)) return true;
+    }
+  }
+  return false;
 }
 
 function detectCorrelations(items: Array<{ platform: string; title: string; shortSummary: string; sourceId?: string; correlationKey?: string }>): Array<{ fromIndex: number; toIndex: number; text: string }> {
@@ -116,11 +193,27 @@ export class BriefingService {
     return BriefingService.instance;
   }
 
-  async generateBriefingForSchedule(userId: string, scheduleId: string | null, triggerSource: "manual" | "schedule"): Promise<{ success: boolean; briefingId?: string; error?: string }> {
+  async generateBriefingForSchedule(userId: string, scheduleId: string | null, triggerSource: "manual" | "schedule"): Promise<{ success: boolean; briefingId?: string; empty?: boolean; error?: string }> {
     const startTime = Date.now();
+    const correlationId = getCorrelationId() || `brief_${startTime.toString(36)}`;
+    const log = logger.child({ correlationId, userId, scheduleId, triggerSource });
     const admin = createAdminDb();
     const repo = new BriefingsRepository(admin);
     const integrationsRepo = new IntegrationsRepository(admin);
+
+    // userId is the DB primary key (users.id), which every briefing table
+    // references. The integration layer (user_integrations, whatsapp_sessions,
+    // user_tool_permissions) is keyed by the InsForge auth id instead, so
+    // resolve that mapping here and use the auth id for every integration call.
+    let authUserId = userId;
+    try {
+      const usersRepo = new UsersRepository(admin);
+      const dbUser = await usersRepo.findByDbId(userId);
+      if (dbUser?.auth_user_id) authUserId = dbUser.auth_user_id;
+    } catch (err) {
+      log.warn("Failed to resolve DB user id to auth id, falling back to provided id", { err: err instanceof Error ? err.message : err });
+    }
+    if (authUserId !== userId) log.info("Resolved DB user id to auth id for integration lookups");
 
     let schedule = null;
     let name = "Workspace Briefing";
@@ -143,20 +236,117 @@ export class BriefingService {
     }
 
     try {
-      // 1. Load user's connected integrations
-      const connectionResults = await Promise.allSettled(
-        selectedIntegrations.map(async (provider) => {
-          const status = await integrationsRepo.getConnectionStatus(userId, provider);
-          return { provider, conn: status };
-        })
-      );
+      // 1. Load connected integrations — the source of truth for participation.
+      // An active row in user_integrations is the ONLY gate a provider needs to
+      // enter the briefing (health seat + fetch + AI request list). A connected
+      // provider is never silently hidden.
+      let connectedRecords: Array<Record<string, unknown>> = [];
+      try {
+        connectedRecords = await integrationsRepo.findAllByUser(authUserId) as unknown as Array<Record<string, unknown>>;
+      } catch (err) {
+        log.warn("Failed to load connected integrations", { error: err instanceof Error ? err.message : err });
+      }
+      const connectedProviders = connectedRecords.map((r) => r.provider as string).filter(Boolean);
+      const integrationIds = new Map<string, string>();
+      const lastSyncAt = new Map<string, string>();
+      for (const rec of connectedRecords) {
+        const p = rec.provider as string;
+        if (rec?.id && p) integrationIds.set(p, rec.id as string);
+        if (p && rec.last_sync_at) lastSyncAt.set(p, rec.last_sync_at as string);
+      }
+      log.info("Connected integrations", { providers: connectedProviders, requested: selectedIntegrations });
 
-      const activeIntegrations = connectionResults
-        .filter((r) => r.status === "fulfilled" && r.value.conn?.status === "active")
-        .map((r) => (r as PromiseFulfilledResult<{ provider: string; conn: any }>).value.provider);
+      // Respect the schedule's integration selection (defaulted to full list).
+      // WhatsApp must additionally reach full readiness (auth + open socket +
+      // valid session + completed sync) to contribute data; a row with a
+      // not-ready socket keeps its health seat but contributes no fetched items.
+      const selectedConnected = connectedProviders.filter((p) => selectedIntegrations.includes(p));
+      let whatsappReady = true;
+      if (selectedConnected.includes("whatsapp")) {
+        const { WhatsAppClientManager } = await import("@/lib/whatsapp/client");
+        whatsappReady = (await WhatsAppClientManager.getConnectionState(authUserId)).ready;
+      }
+      const activeIntegrations = whatsappReady
+        ? selectedConnected
+        : selectedConnected.filter((p) => p !== "whatsapp");
+      log.info("Fetchable active integrations", { activeIntegrations, whatsappReady });
 
-      // 2. Fetch platform data via MCP — all in parallel
+      // 2. Fetch platform data via MCP — all in parallel. Every provider runs
+      // through ONE pipeline: fetch → normalize → unified store → aiShape → AI.
       const rawContext: Record<string, unknown> = {};
+      // Normalized records per provider, retained for backend-enforced coverage:
+      // if the AI omits a provider with real data, these build the real items.
+      const contextEntities: Record<string, NormalizedEntity[]> = {};
+      const health: ProviderHealthReport = {};
+      const store = getUnifiedStoreRepo();
+
+      // Provider Health seat for EVERY connected integration up front — zero
+      // data, an error, or an unsupported fetch is reported, never hidden.
+      for (const p of connectedProviders) {
+        health[p] = { ...emptyHealth(true), lastSync: lastSyncAt.get(p) || undefined };
+      }
+      // WhatsApp that is connected but not ready (auth/socket/sync incomplete)
+      // is excluded from fetch — but it must never read as "no recent activity".
+      // Surface the reconnect reason explicitly.
+      if (connectedProviders.includes("whatsapp") && !whatsappReady) {
+        health.whatsapp = {
+          ...(health.whatsapp || emptyHealth(true)),
+          error: "WhatsApp is not fully in sync — reconnect to complete",
+        };
+        log.warn("WhatsApp connected but not ready; marked reconnect", { whatsappReady });
+      }
+
+      const ingest = async (provider: string, result: { status: string; result?: unknown; error?: { message?: string } }): Promise<void> => {
+        const h: ProviderHealth = health[provider] ? { ...health[provider] } : emptyHealth(true);
+        if (result.status !== "success" || result.result == null) {
+          h.error = result.error?.message || "fetch failed";
+          log.warn("MCP fetch returned no data", { provider, error: result.error?.message });
+          health[provider] = { ...h, ...classifyProviderStatus(h) };
+          return;
+        }
+        // Partial failure (e.g. GitHub notifications 403 while issues succeeded):
+        // captured up front so it is never overwritten by the zero-gate below —
+        // data still flows, but the reason is never hidden.
+        if (result.error?.message) {
+          h.error = result.error.message;
+          log.warn("Briefing partial provider failure (data retained)", { provider, error: result.error.message });
+        }
+        const integrationId = integrationIds.get(provider) || "";
+        const entities = normalizeResult(provider, result.result, integrationId);
+        h.normalized = entities.length;
+        // Fetched count of the normalized records (not raw payload): for payloads
+        // that carry a single record object (e.g. a LinkedIn profile), the raw
+        // object counts as 0 via countItems, but it normalizes to 1 real entity —
+        // so the data gate must key off normalized count, never raw count.
+        h.fetched = countItems(result.result) > 0 ? countItems(result.result) : entities.length;
+        if (h.normalized === 0) {
+          // Fail fast (Phase 12): data upstream but normalization dropped it —
+          // never silently continue. Truly-empty payloads read as "no recent
+          // activity"; payloads that had data but dropped read as sync failure.
+          const rawEmpty = countItems(result.result) === 0;
+          if (!h.error && !rawEmpty) h.error = "normalization returned 0 items";
+          health[provider] = { ...h, ...classifyProviderStatus(h) };
+          log[rawEmpty ? "warn" : "error"]("Briefing normalization result", {
+            provider, fetched: countItems(result.result), normalized: h.normalized, rawEmpty, error: h.error,
+          });
+          return;
+        }
+        if (integrationId) {
+          try {
+            h.saved = await store.upsertBatch(authUserId, integrationId, entities);
+          } catch (err) {
+            h.error = `persist failed: ${err instanceof Error ? err.message : err}`;
+            log.error("Briefing persist failure", { provider, error: h.error });
+          }
+        }
+        rawContext[provider] = aiShapeForProvider(provider, entities);
+        h.aiUsed = countItems(rawContext[provider]);
+        contextEntities[provider] = entities;
+        health[provider] = { ...h, ...classifyProviderStatus(h) };
+        log.info("Briefing provider ingested", { provider, ...h });
+      };
+
+      const fetchedProviders: string[] = [];
 
       const platformTasks = [
         { provider: "gmail", action: "gmail_search_emails", params: { query: "is:unread", limit: 5 } as Record<string, unknown>, categoryFilter: "email" },
@@ -171,32 +361,125 @@ export class BriefingService {
         { provider: "linkedin", action: "linkedin_get_profile", params: {} },
       ];
 
+      await Promise.allSettled(
+        platformTasks
+          .filter(p => activeIntegrations.includes(p.provider) && (!p.categoryFilter || selectedCategories.includes(p.categoryFilter)))
+          .map(async (p) => {
+            const r = await executeMCPAction(authUserId, p.provider, p.action, p.params);
+            if (r.status === "success") fetchedProviders.push(p.provider);
+            await ingest(p.provider, r);
+          })
+      );
+
       const githubPromise = activeIntegrations.includes("github")
         ? (async () => {
             const [issues, notifications] = await Promise.allSettled([
-              executeMCPAction(userId, "github", "github_list_issues", {}),
-              executeMCPAction(userId, "github", "github_get_notifications", {}),
+              executeMCPAction(authUserId, "github", "github_list_issues", {}),
+              executeMCPAction(authUserId, "github", "github_get_notifications", {}),
             ]);
-            const githubData: Record<string, unknown> = {};
-            if (issues.status === "fulfilled" && issues.value.status === "success") githubData.issues = issues.value.result;
-            if (notifications.status === "fulfilled" && notifications.value.status === "success") githubData.notifications = notifications.value.result;
-            if (Object.keys(githubData).length > 0) rawContext.github = githubData;
+            const combined: Record<string, unknown> = {};
+            let lastError: string | undefined;
+            if (issues.status === "fulfilled" && issues.value.status === "success" && issues.value.result != null) {
+              combined.issues = issues.value.result;
+            } else if (issues.status === "fulfilled") {
+              lastError = issues.value.error?.message;
+            } else {
+              lastError = issues.reason instanceof Error ? issues.reason.message : String(issues.reason);
+            }
+            if (notifications.status === "fulfilled" && notifications.value.status === "success" && notifications.value.result != null) {
+              combined.notifications = notifications.value.result;
+            } else if (notifications.status === "fulfilled") {
+              lastError = notifications.value.error?.message;
+            } else {
+              lastError = notifications.reason instanceof Error ? notifications.reason.message : String(notifications.reason);
+            }
+            if (Object.keys(combined).length > 0) {
+              // Partial success: report the error too so a failed sub-request is
+              // never hidden behind "no recent activity".
+              fetchedProviders.push("github");
+              await ingest("github", lastError
+                ? { status: "success", result: combined, error: { message: lastError } }
+                : { status: "success", result: combined });
+            } else {
+              // Both GitHub requests failed — surface the reason, never pretend
+              // "no recent activity".
+              await ingest("github", { status: "error", error: { message: lastError || "GitHub returned no issues or notifications" } });
+            }
           })().catch(e => console.warn("GitHub MCP action failed in briefing sync:", e))
         : Promise.resolve();
-
-      const mcpResults = await Promise.allSettled(
-        platformTasks
-          .filter(p => activeIntegrations.includes(p.provider) && (!p.categoryFilter || selectedCategories.includes(p.categoryFilter)))
-          .map(p => executeMCPAction(userId, p.provider, p.action, p.params).then(r => ({ provider: p.provider, result: r })))
-      );
-      for (const r of mcpResults) {
-        if (r.status === "rejected") continue;
-        const { provider, result } = r.value;
-        if (result.status !== "success" || !result.result) continue;
-        rawContext[provider] = provider === "linkedin" ? [result.result] : result.result;
-      }
       // GitHub runs in parallel with all other platform calls
       await githubPromise;
+
+      const perProviderCounts = Object.fromEntries(
+        Object.entries(rawContext).map(([provider, value]) => [provider, countItems(value)])
+      );
+      const healthReport = Object.fromEntries(
+        Object.entries(health).map(([provider, h]) => [provider, { ...h, quality: computeQuality(h) }])
+      );
+      log.info("Fetched platform data", { fetchedProviders, perProviderCounts });
+      log.info("Briefing provider health", { health: healthReport });
+
+      // Per-provider pipeline report — the observable audit trail for every
+      // connected integration. A provider is shown regardless of outcome.
+      log.info("Briefing provider report", {
+        report: connectedProviders.map((p) => {
+          const h = health[p] || { ...emptyHealth(true) };
+          return {
+            provider: p,
+            connected: true,
+            fetched: h.fetched,
+            normalized: h.normalized,
+            saved: h.saved,
+            aiUsed: h.aiUsed,
+            status: classifyProviderStatus(h).status,
+            statusLabel: classifyProviderStatus(h).label,
+            reconnectRequired: classifyProviderStatus(h).reconnect,
+            lastSync: h.lastSync || null,
+            quality: computeQuality(h).label,
+            reason: h.error || (h.fetched === 0 ? "no recent activity" : null),
+          };
+        }),
+      });
+
+      // 2.5 Data gate: never fabricate. If no connected integration returned real
+      // data, do NOT call the AI — return an explicit empty so the UI shows the
+      // "no data / connect integrations" state instead of a hallucinated briefing.
+      log.info("AI input size", {
+        rawContextBytes: JSON.stringify(rawContext).length,
+        estimatedTokens: Math.ceil(JSON.stringify(rawContext).length / 4),
+        sources: fetchedProviders,
+      });
+      if (!hasRealData(rawContext)) {
+        log.warn("No real data from any integration; skipping AI to avoid hallucination", { elapsedMs: Date.now() - startTime });
+        if (scheduleId && schedule) {
+          const nextRun = calculateNextRun(schedule.frequency, schedule.timezone);
+          await repo.updateSchedule(scheduleId, {
+            last_run: new Date().toISOString(),
+            next_run: nextRun,
+          });
+        }
+        // Connected providers still deserve a visible health seat even when none
+        // returned data. Store a zero-item briefing carrying provider_health so
+        // the UI shows "no recent activity" per provider instead of hiding them.
+        if (connectedProviders.length > 0) {
+          const emptyBriefing = await repo.createBriefing({
+            user_id: userId,
+            schedule_id: scheduleId,
+            title: `${name} — No recent activity`,
+            executive_summary: "No recent activity from any connected integration.",
+            full_content: { title: name, items: [], executiveSummary: "No recent activity from any connected integration." },
+            priority_score: 0,
+            source_freshness: {},
+            provider_health: healthReport as Record<string, unknown>,
+            generated_at: new Date().toISOString(),
+            ai_model: "none",
+            status: "completed",
+          });
+          log.info("Briefing generated with zero data (health-only)", { briefingId: emptyBriefing.id });
+          return { success: true, briefingId: emptyBriefing.id, empty: true };
+        }
+        return { success: true, empty: true };
+      }
 
       // 3. Prepare Prompt for central OpenRouter AI service
       const systemPrompt = `You are Syncra's central AI intelligence assistant.
@@ -249,10 +532,52 @@ The response must fit this exact JSON structure:
   },
   "recommendations": [
     {
-      "text": "Actionable advice, e.g., 'Reply to Alice regarding PR review'",
+      "text": "Actionable advice, e.g. 'Reply to Alice regarding PR review'",
       "type": "reply_email" | "prepare_meeting" | "finish_task" | "contact_client" | "schedule_follow_up",
       "platform": "gmail" | "outlook" | "slack" | "whatsapp" | "telegram" | "discord" | "github" | "linkedin" | "calendar" | "notion" | "linear",
-      "sourceId": "unique ID of source item if any, or null"
+      "sourceId": "unique ID of source item if any, or null",
+      "priority": "high" | "medium" | "low",
+      "reason": "1-2 sentences explaining why this action matters, referencing actual items in the context",
+      "confidence": (0 to 100, how sure you are this is the right action),
+      "affectedPlatforms": ["platforms involved in this decision"],
+      "relatedData": ["short references to the source items / threads / projects that motivated this recommendation"]
+    }
+  ],
+  "health": {
+    "overall": (0 to 100 workspace health score),
+    "breakdown": [
+      { "name": "Communication | Development | Meetings | Productivity | Response Time | Pending Work", "score": (0 to 100), "reason": "why this score — reference actual data, or mark 'insufficient data' if none" }
+    ],
+    "summary": "1-2 sentence health summary"
+  },
+  "insights": [
+    { "text": "observational insight drawn ONLY from actual items", "type": "pattern" | "warning" | "opportunity" | "concept", "importance": "high" | "medium" | "low" }
+  ],
+  "relationships": [
+    {
+      "title": "name of the grouped topic, e.g. 'Deployment Discussion'",
+      "summary": "how the items relate",
+      "platforms": ["platform names involved"],
+      "items": [ { "platform": "platform", "title": "the specific item title" } ]
+    }
+  ],
+  "timeline": [
+    { "time": "HH:MM or date-time string", "title": "event description", "platform": "name" }
+  ],
+  "confidence": {
+    "overall": (0 to 100),
+    "reason": "brief statement of how certain the summary is given available data",
+    "missingData": ["what integrations/steps are caches"],
+  },
+  "goals": [
+    { "text": "a concrete goal for today derived from actual items, e.g. 'Reply to 4 clients'", "priority": "high" | "medium" | "low", "reason": "why this goal matters today" }
+  ],
+  "sourceStats": [
+    {
+      "platform": "name",
+      "syncStatus": "ok" | "partial" | "error" | "skipped",
+      "itemsProcessed": (number of items actually provided by that platform in the context),
+      "lastSync": "timestamp from the item data or omit"
     }
   ],
   "items": [
@@ -272,14 +597,120 @@ The response must fit this exact JSON structure:
 }
 
 Goal parameter of current briefing schedule: "${goal}".
-Integrations requested: ${selectedIntegrations.join(", ")}.
+Connected integrations (the ONLY sources with data available): ${activeIntegrations.join(", ") || "(none)"}.
+Do NOT report any platform as missing, and do NOT emit items for platforms outside this list — they are simply not connected.
 Categories requested: ${selectedCategories.join(", ")}.
-For each platform, provide relevant data: gmail/outlook→emails, slack/whatsapp/telegram/discord→messages, github→issues/PRs/notifications, linkedin→profile/feed, calendar→events, notion→pages, linear→issues.`;
+For each platform, provide relevant data: gmail/outlook→emails, slack/whatsapp/telegram/discord→messages, github→issues/PRs/notifications, linkedin→profile/feed, calendar→events, notion→pages, linear→issues.
+
+CRITICAL: Only report data actually present in <data_context>. Never invent items, summaries, counts, or metrics for any platform or category that has no data. If a requested platform or category returned nothing, omit it entirely (no fabricated placeholders).
+
+ANTI-HALLUCINATION: every priority assignment, health score, insight, relationship, recommendation, goal, timeline entry, and confidence statement must be derivable from the actual items in <data_context>. Never claim something happened that is not in the data. If data for a dimension is absent, set that health breakdown reason to 'insufficient data' and lower the confidence overall score. Never fabricate lastSync timestamps — only set them if present in the item data. Goals must only be things the data actually supports — never invent pending tasks or waiting counts that are not present in the items.`;
+
+      // Phase 9 — balance by importance, not volume. One urgent GitHub issue
+      // outweighs 50 routine emails; every provider with data keeps a seat.
+      const coveragePrompt = `
+COVERAGE REQUIREMENT:
+For EVERY provider in the manifest below, you MUST emit at least one corresponding entry in "items" (and reflect it in the relevant "categories" section). Do NOT leave a provider that has data out of "items" — this is the primary user requirement. Providers with 0 items have no data and must be omitted entirely.
+BALANCE: When sizing "items", prioritize by IMPORTANCE and urgency across providers — never by message volume. A single high-priority GitHub issue or urgent direct message must appear even if a provider has many more routine items. Keep at least one item per provider with data, then allocate remaining slots by priority, not count.
+Source manifest (real item counts delivered to the AI from each integration):
+${buildManifest(healthReport)}`;
 
       // 4. Generate AI summary
-      const aiResult = await generateJsonResponse<AIResponseBriefing>(systemPrompt, rawContext);
+      const aiResult = await generateJsonResponse<AIResponseBriefing>(systemPrompt + coveragePrompt, rawContext, { temperature: 0.2 });
       if (!aiResult) {
         throw new Error("Central AI service returned null response.");
+      }
+
+      // 4.5 Backend-enforced provider coverage. The AI summarizes and
+      // prioritizes, but the BACKEND guarantees every provider with real data
+      // is represented. If the AI skipped a provider that has normalized
+      // records, inject real items built from those records — never a
+      // placeholder. `referencedByAI` = AI's original platforms; `rendered` =
+      // final platforms after backfill (what gets stored).
+      // 4.5b Provenance gate — Anti-hallucination, enforced by the BACKEND.
+      // The AI may not emit an item for a platform unless that platform actually
+      // produced normalized records in THIS run, nor more items than it has
+      // records. Any AI item for a platform with no data is fabricated (e.g. a
+      // "PR #42" from nothing) and dropped — so every rendered item originates
+      // from a real connected integration.
+      const rawAIItems = aiResult.items || [];
+      const { grounded: aiItems, droppedPlatforms, droppedUntraceable } = filterGroundedItems(rawAIItems, contextEntities, { requireTraceable: true });
+      if (droppedPlatforms.length > 0) {
+        log.warn("Briefing dropped fabricated items", {
+          droppedPlatforms,
+          droppedTitles: rawAIItems.filter((i) => droppedPlatforms.includes(i.platform)).map((i) => i.title).slice(0, 10),
+        });
+      }
+      if (droppedUntraceable.length > 0) {
+        log.warn("Briefing dropped untraceable items (no matching synchronized entity)", {
+          droppedCount: droppedUntraceable.length,
+          dropped: droppedUntraceable.slice(0, 10),
+        });
+      }
+
+      const referencedByAI = new Set<string>(aiItems.map((i) => i.platform));
+      const backfilledPlatforms = new Set<string>();
+      const backfilledItems: typeof aiItems = [];
+      for (const [provider, entities] of Object.entries(contextEntities)) {
+        if (entities.length === 0 || referencedByAI.has(provider)) continue;
+        const items = buildCoverageItems(provider, entities);
+        if (items.length === 0) continue;
+        backfilledItems.push(...items);
+        backfilledPlatforms.add(provider);
+        log.warn("Briefing coverage backfill", { provider, items: items.length, reason: "AI omitted a provider with normalized data" });
+      }
+      if (backfilledItems.length > 0) {
+        aiResult.items = [...aiItems, ...backfilledItems];
+        log.info("Briefing coverage reconciled", {
+          backfilledProviders: [...backfilledPlatforms],
+          backfilledItems: backfilledItems.length,
+          aiItems: aiItems.length,
+        });
+      } else {
+        aiResult.items = aiItems;
+      }
+      const renderedPlatforms = new Set<string>((aiResult.items || []).map((i) => i.platform));
+
+      log.info("AI briefing response generated", {
+        aiTitle: aiResult.title,
+        itemCount: aiResult.items?.length,
+        aiPlatformDistribution: (aiResult.items || []).reduce((acc, item) => {
+          acc[item.platform] = (acc[item.platform] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+        backfilled: [...backfilledPlatforms],
+        elapsedMs: Date.now() - startTime,
+      });
+
+      // Per-provider pipeline result (post-AI) — the audit trail. A provider
+      // with data must be `referencedBy` and `rendered`; any gap is surfaced.
+      log.info("Briefing provider pipeline result", {
+        report: connectedProviders.map((p) => {
+          const h = health[p] || { ...emptyHealth(true) };
+          return {
+            provider: p,
+            connected: true,
+            fetched: h.fetched,
+            normalized: h.normalized,
+            saved: h.saved,
+            passedToAI: (rawContext[p] !== undefined) && countItems(rawContext[p]) > 0,
+            referencedByAI: referencedByAI.has(p),
+            rendered: renderedPlatforms.has(p),
+            quality: computeQuality(h).label,
+            reason: h.error || (h.fetched === 0 ? "no recent activity" : null),
+          };
+        }),
+      });
+
+      // Persist referenced/rendered into the stored health report so the UI and
+      // any downstream audit can see AI coverage per provider.
+      for (const p of connectedProviders) {
+        const h = healthReport[p] || { ...emptyHealth(true) };
+        h.referenced = referencedByAI.has(p);
+        h.rendered = renderedPlatforms.has(p);
+        h.reason = h.error || (h.fetched === 0 ? "no recent activity" : undefined);
+        Object.assign(h, classifyProviderStatus(h));
+        healthReport[p] = h;
       }
 
       // 5. Store generated briefing (with FK fallback)
@@ -290,6 +721,13 @@ For each platform, provide relevant data: gmail/outlook→emails, slack/whatsapp
         executive_summary: aiResult.executiveSummary,
         full_content: aiResult as unknown as Record<string, unknown>,
         priority_score: aiResult.priorityScore || 50,
+        source_freshness: Object.fromEntries(
+          Object.entries(rawContext).map(([provider, value]) => [
+            provider,
+            Array.isArray(value) ? `synced:${value.length}` : "synced",
+          ])
+        ),
+        provider_health: healthReport as Record<string, unknown>,
         generated_at: new Date().toISOString(),
         ai_model: process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat-v3",
         status: "completed",
@@ -310,7 +748,7 @@ For each platform, provide relevant data: gmail/outlook→emails, slack/whatsapp
 
       // 6. Store briefing items with correlation data
       const storedItems = await Promise.all(
-        aiResult.items.map(async (item) => {
+        (aiResult.items || []).map(async (item) => {
           return repo.createBriefingItem({
             briefing_id: briefingId,
             platform: item.platform,
@@ -323,6 +761,7 @@ For each platform, provide relevant data: gmail/outlook→emails, slack/whatsapp
               correlationKey: (item as any).correlationKey || null,
               from: item.from || null,
               to: item.to || null,
+              coverage_backfilled: backfilledPlatforms.has(item.platform) || null,
             },
             priority: item.priority || "normal",
             status: "unread",
@@ -397,10 +836,11 @@ For each platform, provide relevant data: gmail/outlook→emails, slack/whatsapp
         }
       }
 
+      log.info("Briefing generation completed", { briefingId, elapsedMs: Date.now() - startTime });
       return { success: true, briefingId };
     } catch (error: any) {
       const errorMsg = error instanceof Error ? error.message : "Briefing generation failed";
-      console.error(`Briefing generation failed for user ${userId}:`, error);
+      log.error("Briefing generation failed", { error: errorMsg, elapsedMs: Date.now() - startTime });
 
       // Store failed execution in history
       try {

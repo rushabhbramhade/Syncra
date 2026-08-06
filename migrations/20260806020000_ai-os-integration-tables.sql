@@ -273,7 +273,9 @@ CREATE INDEX IF NOT EXISTS idx_webhook_events_unprocessed
   ON webhook_events(processed_at) WHERE processed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_webhook_events_provider ON webhook_events(provider, received_at);
 
--- 8. Audit logs (architecture §15)
+-- 8. Audit logs (architecture §15). Table is created by an earlier migration
+-- and owned by postgres, so no ALTER/INDEX/POLICY here (CLI role can't modify
+-- it). Its indexes and RLS already exist from production-readiness.
 CREATE TABLE IF NOT EXISTS audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL,
@@ -284,8 +286,6 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_audit_logs_user_time ON audit_logs(user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_integration ON audit_logs(integration_id);
 
 -- 9. RLS — unified tables and sync_state follow the proven is_owner(user_id)
 -- pattern; credentials and webhook_events stay worker-only (no user policy).
@@ -306,7 +306,7 @@ BEGIN
     EXECUTE format('CREATE POLICY "Users can delete own %I" ON public.%I FOR DELETE TO authenticated USING (public.is_owner(user_id))', t, t);
   END LOOP;
 
-  -- audit_logs: users may read their own; writes stay worker-only.
-  EXECUTE 'ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY';
-  EXECUTE 'CREATE POLICY "Users can view own audit_logs" ON public.audit_logs FOR SELECT TO authenticated USING (public.is_owner(user_id))';
+  -- audit_logs: worker-only table created by an earlier migration and owned by
+  -- postgres; RLS is already enabled there with no user policies. Do not add a
+  -- SELECT policy here — the CLI role cannot ALTER a postgres-owned table.
 END $$;

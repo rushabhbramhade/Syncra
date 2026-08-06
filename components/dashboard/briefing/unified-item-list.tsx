@@ -5,11 +5,10 @@ import { BriefingItemRecord } from "@/lib/repositories/briefings-repository";
 import { WhyTagPopover } from "./why-tag-popover";
 import { CorrelationLink } from "./correlation-link";
 import {
-  Search, Inbox, ChevronRight, Mail, MessageCircle, AlertCircle, Bell, CheckSquare,
-  RefreshCw, ThumbsUp, MessageSquare, ExternalLink, Archive, Clock, CheckCircle
+  Search, Inbox, ChevronRight, Mail, MessageCircle, AlertCircle, Bell,
+  ThumbsUp, MessageSquare, ExternalLink, Clock, CheckCircle,
+  Zap, Filter
 } from "lucide-react";
-
-type ViewMode = "type" | "platform";
 
 interface UnifiedItemListProps {
   items: BriefingItemRecord[];
@@ -24,22 +23,60 @@ interface UnifiedItemListProps {
 
 const STATUS_TABS = ["all", "unread", "completed", "archived", "snoozed"] as const;
 
+interface BriefingItemMeta {
+  title?: unknown;
+  shortSummary?: unknown;
+  signals?: unknown[];
+  whyClassified?: unknown;
+  correlation?: { relatedItemId?: string; text?: string; platform?: string };
+}
+
+type SmartFilter =
+  | "all"
+  | "needs_reply"
+  | "unread"
+  | "today"
+  | "this_week"
+  | "high"
+  | "medium"
+  | "low"
+  | "mentions";
+
+const SMART_FILTERS: { key: SmartFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "high", label: "High" },
+  { key: "medium", label: "Medium" },
+  { key: "low", label: "Low" },
+  { key: "needs_reply", label: "Needs Reply" },
+  { key: "mentions", label: "Mentions" },
+  { key: "unread", label: "Unread" },
+  { key: "today", label: "Today" },
+  { key: "this_week", label: "This Week" },
+];
+
+const PRIORITY_RANK: Record<string, number> = { high: 0, normal: 1, low: 2 };
+
+export function formatWaiting(timestamp: string): string {
+  const ms = Date.now() - new Date(timestamp).getTime();
+  if (ms < 0) return "just now";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return `${Math.floor(days / 7)}w`;
+}
+
 function getPlatformIcon(platform: string, className = "w-4 h-4") {
   const p = platform.toLowerCase();
   if (p === "gmail" || p === "outlook") return <Mail className={className} />;
   if (p === "slack" || p === "whatsapp" || p === "telegram" || p === "discord") return <MessageCircle className={className} />;
   if (p === "github") return <AlertCircle className={className} />;
   if (p === "linkedin") return <Bell className={className} />;
-  if (p === "calendar") return <CalendarIcon className={className} />;
-  if (p === "notion" || p === "linear") return <FileTextIcon className={className} />;
+  if (p === "calendar") return <AlertCircle className={className} />;
   return <Inbox className={className} />;
-}
-
-function CalendarIcon({ className }: { className?: string }) {
-  return <AlertCircle className={className} />;
-}
-function FileTextIcon({ className }: { className?: string }) {
-  return <AlertCircle className={className} />;
 }
 
 function getPlatformClass(platform: string) {
@@ -58,21 +95,6 @@ function getPlatformClass(platform: string) {
   return "bg-slate-500/10 text-slate-600 border-slate-500/20";
 }
 
-function getCategoryIcon(category: string, className = "w-3.5 h-3.5") {
-  const c = category.toLowerCase();
-  if (c === "email") return <Mail className={className} />;
-  if (c === "messages") return <MessageCircle className={className} />;
-  if (c === "mentions") return <Bell className={className} />;
-  if (c === "tasks") return <CheckSquare className={className} />;
-  if (c === "followups" || c === "follow-ups" || c === "follow_ups") return <RefreshCw className={className} />;
-  if (c === "activity") return <ActivityIcon className={className} />;
-  return <Inbox className={className} />;
-}
-
-function ActivityIcon({ className }: { className?: string }) {
-  return <AlertCircle className={className} />;
-}
-
 function getPrimaryAction(platform: string): { label: string; icon: React.ReactNode } {
   const p = platform.toLowerCase();
   if (p === "gmail") return { label: "Reply", icon: <Mail className="w-3.5 h-3.5" /> };
@@ -89,7 +111,8 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
   items, activeTab, onTabChange, searchQuery, onSearchChange,
   onItemClick, onMarkDone, isDataLoading = false,
 }: UnifiedItemListProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>("type");
+  const [smartFilter, setSmartFilter] = useState<SmartFilter>("all");
+  const [focusMode, setFocusMode] = useState(false);
 
   const filteredItems = useMemo(() => {
     return items.filter(item => {
@@ -99,88 +122,116 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
       else if (activeTab === "archived" && item.status !== "archived") return false;
       else if (activeTab === "snoozed" && item.status !== "snoozed") return false;
 
+      const cat = item.category.toLowerCase();
+      const priority = item.priority.toLowerCase();
+
+      if (smartFilter === "high" && priority !== "high") return false;
+      if (smartFilter === "medium" && priority !== "normal") return false;
+      if (smartFilter === "low" && priority !== "low") return false;
+      if (smartFilter === "mentions" && cat !== "mentions") return false;
+      if (smartFilter === "needs_reply" && !["email", "messages", "mentions", "followups", "follow-ups", "follow_ups"].includes(cat)) return false;
+      if (smartFilter === "unread" && item.status !== "unread") return false;
+      if (smartFilter === "today" && !isToday(item.timestamp)) return false;
+      if (smartFilter === "this_week" && !isThisWeek(item.timestamp)) return false;
+
+      if (focusMode && priority !== "high" && smartFilter !== "high") {
+        if (!["email", "messages", "mentions"].includes(cat)) return false;
+      }
+
       if (searchQuery.trim()) {
-        const meta = (item.metadata || {}) as Record<string, any>;
-        const titleText = (meta.title || "").toLowerCase();
-        const summaryText = (meta.shortSummary || "").toLowerCase();
+        const meta = item.metadata || {};
+        const titleText = String((meta as { title?: unknown }).title || "").toLowerCase();
+        const summaryText = String((meta as { shortSummary?: unknown }).shortSummary || "").toLowerCase();
         const q = searchQuery.toLowerCase();
         return titleText.includes(q) || summaryText.includes(q);
       }
       return true;
     });
-  }, [items, activeTab, searchQuery]);
+  }, [items, activeTab, smartFilter, focusMode, searchQuery]);
 
-  const groupedByType = useMemo(() => {
-    const groups: Record<string, BriefingItemRecord[]> = {};
+  const groupedByPriority = useMemo(() => {
+    const groups: Record<string, BriefingItemRecord[]> = { high: [], normal: [], low: [] };
     for (const item of filteredItems) {
-      const cat = item.category.toLowerCase();
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(item);
+      const key = (["high", "normal", "low"].includes(item.priority.toLowerCase()) ? item.priority.toLowerCase() : "normal");
+      groups[key].push(item);
+    }
+    for (const key of Object.keys(groups)) {
+      groups[key].sort((a, b) => {
+        const rankA = PRIORITY_RANK[a.priority.toLowerCase()] ?? 1;
+        const rankB = PRIORITY_RANK[b.priority.toLowerCase()] ?? 1;
+        if (rankA !== rankB) return rankA - rankB;
+        return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+      });
     }
     return groups;
   }, [filteredItems]);
 
-  const groupedByPlatform = useMemo(() => {
-    const groups: Record<string, BriefingItemRecord[]> = {};
-    for (const item of filteredItems) {
-      const p = item.platform.toLowerCase();
-      if (!groups[p]) groups[p] = [];
-      groups[p].push(item);
-    }
-    return groups;
-  }, [filteredItems]);
+  const activeCount = items.filter(i => i.status === "unread").length;
 
   return (
     <div className="space-y-4">
-      {/* View Mode Toggle + Search */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex bg-background-mist border border-border-mist rounded-xl p-1 gap-1">
+      {/* Smart Filter Chips + Focus Mode */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1 text-[11px] font-black text-text-slate uppercase tracking-wider mr-1">
+            <Filter className="w-3.5 h-3.5" />
+            Filter
+          </span>
+          {SMART_FILTERS.map(f => (
+            <button
+              key={f.key}
+              onClick={() => setSmartFilter(f.key)}
+              className={`text-[11px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider border transition-colors ${
+                smartFilter === f.key
+                  ? "bg-accent-purple/10 text-accent-purple border-accent-purple/30"
+                  : "bg-background-mist text-text-slate border-border-mist hover:text-secondary"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
           <button
-            onClick={() => setViewMode("type")}
-            className={`text-[12px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider transition-colors ${
-              viewMode === "type" ? "bg-white text-secondary shadow-sm" : "text-text-slate hover:text-secondary"
+            onClick={() => setFocusMode(o => !o)}
+            className={`text-[11px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider border transition-colors flex items-center gap-1.5 ${
+              focusMode
+                ? "bg-error/10 text-error border-error/30"
+                : "bg-background-mist text-text-slate border-border-mist hover:text-secondary"
             }`}
           >
-            By Type
-          </button>
-          <button
-            onClick={() => setViewMode("platform")}
-            className={`text-[12px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider transition-colors ${
-              viewMode === "platform" ? "bg-white text-secondary shadow-sm" : "text-text-slate hover:text-secondary"
-            }`}
-          >
-            By Platform
+            <Zap className="w-3.5 h-3.5" />
+            Focus Mode
           </button>
         </div>
 
-        <div className="relative">
-          <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-text-fog" />
-          <input
-            type="text"
-            placeholder="Search items..."
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            className="w-full sm:w-56 rounded-xl border border-border-mist bg-background-mist text-[12.5px] font-semibold text-secondary pl-9 pr-3 py-2 outline-none focus:border-accent-purple focus:bg-white duration-150"
-          />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex bg-background-mist border border-border-mist rounded-xl p-1 gap-1 overflow-x-auto">
+            {STATUS_TABS.map(tab => (
+              <button
+                key={tab}
+                onClick={() => onTabChange(tab)}
+                className={`text-[11px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider transition-colors shrink-0 ${
+                  activeTab === tab ? "bg-white text-secondary shadow-sm" : "text-text-slate hover:text-secondary"
+                }`}
+              >
+                {tab === "all" ? `All (${activeCount})` : tab}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-text-fog" />
+            <input
+              type="text"
+              placeholder="Search items..."
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              className="w-full sm:w-56 rounded-xl border border-border-mist bg-background-mist text-[12.5px] font-semibold text-secondary pl-9 pr-3 py-2 outline-none focus:border-accent-purple focus:bg-white duration-150"
+            />
+          </div>
         </div>
       </div>
 
-      {/* Status Tabs */}
-      <div className="flex bg-background-mist border border-border-mist rounded-xl p-1 gap-1 overflow-x-auto">
-        {STATUS_TABS.map(tab => (
-          <button
-            key={tab}
-            onClick={() => onTabChange(tab)}
-            className={`text-[11px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider transition-colors shrink-0 ${
-              activeTab === tab ? "bg-white text-secondary shadow-sm" : "text-text-slate hover:text-secondary"
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {/* Items */}
+      {/* Items grouped by priority */}
       {isDataLoading ? (
         <div className="space-y-3 animate-pulse">
           {[1,2,3].map(i => <div key={i} className="h-20 bg-background-mist rounded-xl border border-border-mist" />)}
@@ -191,39 +242,29 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
           <h4 className="font-bold text-[14px]">No Items Found</h4>
           <p className="text-[12px] max-w-xs mx-auto">Try a different filter or search term.</p>
         </div>
-      ) : viewMode === "type" ? (
-        <div className="space-y-6">
-          {Object.entries(groupedByType).map(([category, catItems]) => (
-            <div key={category}>
-              <h4 className="text-[13px] font-black text-secondary uppercase tracking-wider flex items-center gap-1.5 mb-3 px-1">
-                {getCategoryIcon(category)}
-                <span className="capitalize">{category.replace(/[-_]/g, " ")}</span>
-                <span className="text-text-fog font-bold text-[11px]">({catItems.length})</span>
-              </h4>
-              <div className="space-y-2">
-                {catItems.map(item => (
-                  <ItemRow key={item.id} item={item} onItemClick={onItemClick} onMarkDone={onMarkDone} />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
       ) : (
         <div className="space-y-6">
-          {Object.entries(groupedByPlatform).map(([platform, platItems]) => (
-            <div key={platform}>
-              <h4 className="text-[13px] font-black text-secondary uppercase tracking-wider flex items-center gap-1.5 mb-3 px-1">
-                {getPlatformIcon(platform)}
-                <span className="capitalize">{platform}</span>
-                <span className="text-text-fog font-bold text-[11px]">({platItems.length})</span>
-              </h4>
-              <div className="space-y-2">
-                {platItems.map(item => (
-                  <ItemRow key={item.id} item={item} onItemClick={onItemClick} onMarkDone={onMarkDone} />
-                ))}
+          {(["high", "normal", "low"] as const).map(level => {
+            const levelItems = groupedByPriority[level];
+            if (levelItems.length === 0) return null;
+            const label = level === "high" ? "High Priority" : level === "normal" ? "Medium Priority" : "Low Priority";
+            return (
+              <div key={level}>
+                <h4 className={`text-[13px] font-black uppercase tracking-wider flex items-center gap-1.5 mb-3 px-1 ${
+                  level === "high" ? "text-error" : level === "normal" ? "text-amber-600" : "text-text-slate"
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${level === "high" ? "bg-error" : level === "normal" ? "bg-amber-500" : "bg-text-fog"}`} />
+                  <span>{label}</span>
+                  <span className="text-text-fog font-bold text-[11px]">({levelItems.length})</span>
+                </h4>
+                <div className="space-y-2">
+                  {levelItems.map(item => (
+                    <ItemRow key={item.id} item={item} onItemClick={onItemClick} onMarkDone={onMarkDone} />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -235,7 +276,7 @@ const ItemRow = React.memo(function ItemRow({ item, onItemClick, onMarkDone }: {
   onItemClick: (item: BriefingItemRecord) => void;
   onMarkDone: (itemId: string) => void;
 }) {
-  const meta = (item.metadata || {}) as Record<string, any>;
+  const meta = (item.metadata || {}) as BriefingItemMeta;
   const correlation = meta.correlation as { relatedItemId?: string; text?: string; platform?: string } | undefined;
   const primaryAction = getPrimaryAction(item.platform);
 
@@ -251,7 +292,7 @@ const ItemRow = React.memo(function ItemRow({ item, onItemClick, onMarkDone }: {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <h4 className="font-bold text-[14px] text-secondary group-hover:text-accent-purple duration-200 truncate">
-              {meta.title || "No Title"}
+              {String(meta.title || "No Title")}
             </h4>
             <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border shrink-0 ${
               item.priority === "high" ? "bg-error/10 text-error border-error/20" : "bg-slate-100 text-text-slate border-slate-200"
@@ -260,7 +301,7 @@ const ItemRow = React.memo(function ItemRow({ item, onItemClick, onMarkDone }: {
             </span>
           </div>
           <p className="text-[12.5px] font-medium text-text-slate line-clamp-1 leading-relaxed">
-            {meta.shortSummary || ""}
+            {String(meta.shortSummary || "")}
           </p>
           <div className="flex flex-wrap items-center gap-2 mt-2">
             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${getPlatformClass(item.platform)}`}>
@@ -269,8 +310,9 @@ const ItemRow = React.memo(function ItemRow({ item, onItemClick, onMarkDone }: {
             <span className="text-[10px] font-bold text-text-slate bg-background-mist px-1.5 py-0.5 rounded-md border border-border-mist capitalize">
               {item.category}
             </span>
-            <span className="text-[10px] font-medium text-text-slate">
-              {new Date(item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            <span className="text-[10px] font-medium text-text-slate flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              Waiting {formatWaiting(item.timestamp)}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 mt-2">
@@ -302,5 +344,18 @@ const ItemRow = React.memo(function ItemRow({ item, onItemClick, onMarkDone }: {
     </div>
   );
 });
+
+function isToday(timestamp: string): boolean {
+  const d = new Date(timestamp);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+}
+
+function isThisWeek(timestamp: string): boolean {
+  const d = new Date(timestamp);
+  const now = new Date();
+  const day = 7 * 24 * 60 * 60 * 1000;
+  return now.getTime() - d.getTime() < day;
+}
 
 export default UnifiedItemList;

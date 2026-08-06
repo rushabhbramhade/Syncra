@@ -147,3 +147,25 @@ export class UnifiedStoreRepository {
 export function getUnifiedStoreRepo(): UnifiedStoreRepository {
   return new UnifiedStoreRepository(createAdminDb());
 }
+
+/** Most recent inbound messages for an integration — used by providers whose
+ *  message ingress (webhook) lands here and whose native API has no history. */
+export async function getRecentMessages(
+  userId: string,
+  integrationId: string,
+  limit = 10
+): Promise<Record<string, unknown>[]> {
+  const db = createAdminDb();
+  const { data, error } = await db.database
+    .from("unified_messages")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("integration_id", integrationId)
+    .order("sent_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("[UnifiedStore] getRecentMessages failed:", error.message);
+    return [];
+  }
+  return data ?? [];
+}

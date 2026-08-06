@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Sparkles, ArrowRight } from "lucide-react";
+import { BriefingIntelligence } from "@/components/dashboard/briefing/briefing-intelligence";
+import { BriefingIntelligenceContent } from "@/lib/briefing-intelligence";
 
 interface BriefItem {
   platform: string;
@@ -18,6 +20,8 @@ interface DashboardBriefSectionProps {
   briefId?: string;
   isLoading: boolean;
   renderPlatformIcon: (platform: string, className?: string) => React.ReactNode;
+  intelligence?: BriefingIntelligenceContent;
+  providerHealth?: Record<string, unknown> | null;
 }
 
 export function DashboardBriefSection({
@@ -28,6 +32,8 @@ export function DashboardBriefSection({
   briefId,
   isLoading,
   renderPlatformIcon,
+  intelligence,
+  providerHealth,
 }: DashboardBriefSectionProps) {
   const router = useRouter();
 
@@ -82,6 +88,10 @@ export function DashboardBriefSection({
                   </p>
                 </div>
               )}
+
+              <div className="mb-4">
+                <BriefingIntelligence content={intelligence} providerHealth={providerHealth} />
+              </div>
 
               <div className="space-y-4">
                 {briefItems && briefItems.length > 0 ? (

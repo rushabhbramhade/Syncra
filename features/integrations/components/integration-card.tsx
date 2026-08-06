@@ -14,6 +14,7 @@ export interface IntegrationCardProps {
   onSync: () => void;
   onOpenDetails: () => void;
   isSyncing?: boolean;
+  isDisconnecting?: boolean;
 }
 
 function formatDate(dateStr?: string) {
@@ -50,6 +51,7 @@ export function IntegrationCard({
   onSync,
   onOpenDetails,
   isSyncing,
+  isDisconnecting,
 }: IntegrationCardProps) {
   const meta = getProviderMeta(integration.provider);
   const connected = integration.connected;
@@ -136,9 +138,17 @@ export function IntegrationCard({
               </button>
               <button
                 onClick={onDisconnect}
-                className="min-h-[42px] px-3 bg-error-bg border-[2px] border-error text-error font-bold text-[14px] rounded-xl hover:bg-error hover:text-white transition-all duration-200 cursor-pointer"
+                disabled={isDisconnecting}
+                className="min-h-[42px] px-3 bg-error-bg border-[2px] border-error text-error font-bold text-[14px] rounded-xl hover:bg-error hover:text-white transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Disconnect
+                {isDisconnecting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Disconnecting...
+                  </>
+                ) : (
+                  "Disconnect"
+                )}
               </button>
             </>
           ) : (

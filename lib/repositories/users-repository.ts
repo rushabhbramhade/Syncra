@@ -22,6 +22,17 @@ export interface UserInput {
 export class UsersRepository {
   constructor(private db: { database: { from(table: string): any } }) {}
 
+  async findByDbId(dbUserId: string): Promise<UserRecord | null> {
+    const { data, error } = await this.db.database
+      .from("users")
+      .select("*")
+      .eq("id", dbUserId)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return data as UserRecord;
+  }
+
   async findByAuthId(authUserId: string): Promise<UserRecord | null> {
     const { data, error } = await this.db.database
       .from("users")

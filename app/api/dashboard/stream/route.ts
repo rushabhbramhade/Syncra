@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth-guard";
+import { IntegrationEvents } from "@/lib/integration-events";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +17,14 @@ export async function GET(request: NextRequest) {
     start(controller) {
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "connected", userId, timestamp: new Date().toISOString() })}\n\n`));
 
+      // Forward integration lifecycle events (connect/disconnect) so open
+      // pages refresh their integration state immediately.
+      const unsubscribe = IntegrationEvents.subscribe(userId, (event) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {}
+      });
+
       const keepalive = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(`:keepalive\n\n`));
@@ -26,6 +35,7 @@ export async function GET(request: NextRequest) {
 
       request.signal.addEventListener("abort", () => {
         clearInterval(keepalive);
+        unsubscribe();
         controller.close();
       });
     },

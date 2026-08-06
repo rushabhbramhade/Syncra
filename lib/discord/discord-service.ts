@@ -80,13 +80,28 @@ export class DiscordService {
       const channels = await this.listChannels(token, guild.id) as Array<{ id: string; name: string }>;
       for (const channel of channels.slice(0, 5)) {
         const messages = await this.fetchMessages(token, channel.id, limitPerChannel);
-        for (const msg of messages as Array<{ content: string; author: { username: string }; id: string; timestamp: string }>) {
+        for (const msg of messages as Array<{
+          content: string;
+          author: { username: string };
+          id: string;
+          timestamp: string;
+          embeds?: Array<{ title?: string; description?: string }>;
+          mentions?: Array<{ username?: string }>;
+          message_reference?: { message_id?: string };
+          type?: number;
+        }>) {
+          const embeds = (msg.embeds || [])
+            .map(e => [e.title, e.description].filter(Boolean).join(" — "))
+            .filter(Boolean);
           results.push({
             guildName: guild.name,
             channelName: channel.name,
             channelId: channel.id,
             author: msg.author?.username || "unknown",
             content: msg.content,
+            embeds,
+            mentions: (msg.mentions || []).map(m => m.username).filter(Boolean),
+            replyTo: msg.message_reference?.message_id || null,
             id: msg.id,
             timestamp: msg.timestamp,
           });

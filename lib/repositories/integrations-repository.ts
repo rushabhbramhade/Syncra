@@ -23,7 +23,6 @@ export interface IntegrationRecord {
   sync_status?: SyncStatus;
   last_error?: string | null;
   metadata?: Record<string, unknown>;
-  connected?: boolean;
   last_sync_at?: string;
   created_at?: string;
   updated_at?: string;
@@ -191,7 +190,6 @@ export class IntegrationsRepository {
       expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
       sync_status: "success",
       last_error: null,
-      connected: true,
       updated_at: new Date().toISOString(),
     };
     if (refreshToken) patch.encrypted_refresh_token = this.encryptToken(refreshToken);

@@ -8,6 +8,7 @@ import { IntegrationsRepository } from "@/lib/repositories/integrations-reposito
 import type { IntegrationRecord } from "@/lib/repositories/integrations-repository";
 import { createAdminDb } from "@/lib/db";
 import { requireOwnership } from "@/lib/auth-guard";
+import { IntegrationEvents } from "@/lib/integration-events";
 import { logger, getCorrelationId } from "@/lib/logger";
 import { ToolPermissionsRepository } from "@/lib/repositories/tool-permissions-repository";
 import {
@@ -33,6 +34,14 @@ export async function getConnectionStatus(userId: string, providerId: string): P
   const guard = await requireOwnership(userId);
   if ("error" in guard) return null;
   try {
+    // WhatsApp is only "connected" once the whole integration is ready (auth,
+    // open socket, valid session, syncs complete) — a row with status 'active'
+    // can predate a fresh socket re-sync, so surface it as disconnected until then.
+    if (providerId === "whatsapp") {
+      const { WhatsAppClientManager } = await import("@/lib/whatsapp/client");
+      const state = await WhatsAppClientManager.getConnectionState(userId);
+      if (!state.ready) return null;
+    }
     return await getRepo().getConnectionStatus(userId, providerId);
   } catch (e) {
     console.error(`Error fetching connection status for ${providerId}:`, e);
@@ -64,6 +73,18 @@ export async function saveConnection(
     status: "active",
   });
 
+  IntegrationEvents.publish(userId, "connection.updated", providerId);
+
+  // Initial sync: kick off automatically right after authentication completes.
+  // WhatsApp is excluded — its session is only persisted once a verified socket
+  // opens, and its initial sync runs inline (socket context has no request
+  // cookies, so the cookie-guarded syncIntegration action would fail there).
+  if (providerId !== "whatsapp") {
+    void syncIntegration(userId, providerId).catch((err: unknown) => {
+      console.warn(`[integration] initial sync failed for ${providerId}:`, err);
+    });
+  }
+
   return { success: true };
 }
 
@@ -85,6 +106,38 @@ export async function disconnectConnection(userId: string, providerId: string) {
     }
   }
 
+  try {
+    const admin = createAdminDb();
+    await admin.database.from("integration_scopes").delete().eq("user_id", userId).eq("provider", providerId);
+  } catch (err) {
+    console.warn(`Failed to clear integration scopes for ${providerId}:`, err);
+  }
+
+  try {
+    const admin = createAdminDb();
+    await admin.database.from("user_tool_permissions").delete().eq("user_id", userId).eq("provider", providerId);
+  } catch (err) {
+    console.warn(`Failed to clear tool permissions for ${providerId}:`, err);
+  }
+
+  if (providerId === "telegram") {
+    try {
+      await disconnectTelegramWebhookAction(userId);
+    } catch (err) {
+      console.warn(`Failed to delete Telegram webhook for ${userId}:`, err);
+    }
+  }
+
+  if (providerId === "whatsapp") {
+    try {
+      const { WhatsAppClientManager } = await import("@/lib/whatsapp/client");
+      await WhatsAppClientManager.disconnect(userId);
+    } catch (err) {
+      console.warn(`Failed to disconnect WhatsApp client for ${userId}:`, err);
+    }
+  }
+
+  IntegrationEvents.publish(userId, "connection.updated", providerId);
   return repo.delete(userId, providerId);
 }
 
@@ -152,7 +205,7 @@ export async function executeMCPAction(userId: string, providerId: string, actio
     }
 
 
-    const result = await provider.executeTool(accessToken, actionName, args);
+    const result = await provider.executeTool(accessToken, actionName, args, { userId });
     repo.updateLastSync(userId, providerId);
 
     const duration = Date.now() - startTime;
@@ -370,7 +423,7 @@ function mapToWorkspace(record: IntegrationRecord, name: string): WorkspaceInteg
     provider: record.provider,
     name,
     email: record.email || record.provider_account_id || "",
-    connected: record.connected !== false && record.status === "active",
+    connected: record.status === "active",
     has_refresh_token: !!record.encrypted_refresh_token,
     status: record.status,
     sync_status: record.sync_status || "idle",
@@ -476,7 +529,7 @@ export async function syncIntegration(userId: string, providerId: string) {
     const args = DEFAULT_SYNC_ARGS[providerId] || {};
 
     const result = tool
-      ? await provider.executeTool(accessToken, tool, args)
+      ? await provider.executeTool(accessToken, tool, args, { userId })
       : await provider.getProfile(accessToken);
 
     await repo.setSyncStatus(userId, providerId, "success");

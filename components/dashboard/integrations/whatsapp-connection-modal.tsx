@@ -1,239 +1,405 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect */
 
-import React, { useRef } from "react";
-import { createPortal } from "react-dom";
-import { Smartphone, X, ChevronDown, Loader2, Link, Search } from "lucide-react";
-import { CountryDropdownPortal, COUNTRIES, flagEmoji } from "./country-dropdown-portal";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { Smartphone, X, Loader2, CheckCircle2, AlertCircle, RefreshCw, Phone, QrCode, Copy, Check } from "lucide-react";
+
+const QR_TTL_SECONDS = 20;
+const CODE_TTL_SECONDS = 120;
+const E164_REGEX = /^\+[1-9]\d{1,14}$/;
+
+type AuthMethod = "qr" | "code";
 
 export interface WhatsAppConnectionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  pairingCode: string;
-  phoneNumber: string;
-  setPhoneNumber: (val: string) => void;
-  selectedCountry: typeof COUNTRIES[0];
-  setSelectedCountry: (country: typeof COUNTRIES[0]) => void;
-  showCountryDropdown: boolean;
-  setShowCountryDropdown: (show: boolean) => void;
-  countrySearch: string;
-  setCountrySearch: (search: string) => void;
-  isGeneratingPairingCode: boolean;
-  onGeneratePairingCode: (e: React.FormEvent) => Promise<void>;
-  onStopPolling: () => void;
+  // QR flow
+  qr: string | null;
+  // Pairing code flow
+  code: string | null;
+  // Shared
+  isLoading: boolean;
+  error: string | null;
+  connected: boolean;
+  // QR actions
+  onStartQR: () => void;
+  onRefreshQR: () => void;
+  // Pairing code actions
+  onStartCode: (phone: string) => void;
+  onRefreshCode: () => void;
+  // Shared
+  onCancel: () => void;
 }
 
 function WhatsAppConnectionModal({
   isOpen,
   onClose,
-  pairingCode,
-  phoneNumber,
-  setPhoneNumber,
-  selectedCountry,
-  setSelectedCountry,
-  showCountryDropdown,
-  setShowCountryDropdown,
-  countrySearch,
-  setCountrySearch,
-  isGeneratingPairingCode,
-  onGeneratePairingCode,
-  onStopPolling,
+  qr,
+  code,
+  isLoading,
+  error,
+  connected,
+  onStartQR,
+  onRefreshQR,
+  onStartCode,
+  onRefreshCode,
+  onCancel,
 }: WhatsAppConnectionModalProps) {
-  const countryTriggerRef = useRef<HTMLButtonElement>(null);
-  const phoneInputRef = useRef<HTMLDivElement>(null);
+  const [method, setMethod] = useState<AuthMethod>("qr");
+  const [phone, setPhone] = useState("");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"select" | "auth">("select");
+  const [secondsLeft, setSecondsLeft] = useState(QR_TTL_SECONDS);
+  const [copied, setCopied] = useState(false);
+  const lastValueRef = useRef<string | null>(null);
+
+  // Countdown
+  useEffect(() => {
+    const ttl = method === "qr" ? QR_TTL_SECONDS : CODE_TTL_SECONDS;
+    setSecondsLeft(ttl);
+  }, [method, qr, code]);
+
+  useEffect(() => {
+    const value = method === "qr" ? qr : code;
+    if (!value) return;
+    const t = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [method, qr, code]);
+
+  // Auto-refresh on expiry
+  useEffect(() => {
+    const value = method === "qr" ? qr : code;
+    if (value && secondsLeft <= 0) {
+      if (method === "qr") onRefreshQR();
+      else onRefreshCode();
+    }
+  }, [method, qr, code, secondsLeft, onRefreshQR, onRefreshCode]);
+
+  // Reset on open
+  useEffect(() => {
+    if (isOpen) {
+      setPhase("select");
+      setMethod("qr");
+      setPhone("");
+      setPhoneError(null);
+    }
+  }, [isOpen]);
+
+  // Auto-close on connected
+  useEffect(() => {
+    if (connected) {
+      const t = setTimeout(() => {
+        setPhase("select");
+        setPhone("");
+        onClose();
+      }, 800);
+      return () => clearTimeout(t);
+    }
+  }, [connected, onClose]);
 
   if (!isOpen) return null;
 
+  const handleCancel = () => {
+    onCancel();
+    setPhase("select");
+    setPhone("");
+    onClose();
+  };
+
+  const handleSelectQR = () => {
+    setMethod("qr");
+    setPhase("auth");
+    onStartQR();
+  };
+
+  const handleSelectCode = () => {
+    setMethod("code");
+    setPhase("auth");
+  };
+
+  const handleCodeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const err = validatePhone(phone);
+    if (err) { setPhoneError(err); return; }
+    setPhoneError(null);
+    onStartCode(phone);
+  };
+
+  const handleCopyCode = () => {
+    const value = method === "qr" ? undefined : code;
+    if (!value) return;
+    navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRetry = () => {
+    if (method === "qr") {
+      onStartQR();
+    } else {
+      setPhase("select");
+      setPhone("");
+    }
+  };
+
+  const currentValue = method === "qr" ? qr : code;
+  const ttl = method === "qr" ? QR_TTL_SECONDS : CODE_TTL_SECONDS;
+
   return (
-    <>
-      <div
-        role="dialog"
-        aria-modal="true"
-        className="fixed inset-0 bg-slate-950/40 dark:bg-black/60 backdrop-blur-[4px] z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
-      >
-        <div
-          className="bg-white dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl shadow-slate-950/10 dark:shadow-black/50 animate-in fade-in zoom-in duration-200"
-        >
-          <div className="px-6 py-4.5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/[0.3] dark:bg-slate-900/[0.15] flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-[#25D366]/10 dark:bg-[#25D366]/20 text-[#128C7E] dark:text-[#25D366] rounded-xl flex items-center justify-center shrink-0">
-                <Smartphone className="w-5 h-5" />
-              </div>
-              <span className="font-sans font-semibold text-[17px] text-slate-900 dark:text-slate-100 tracking-tight">
-                Link WhatsApp Channel
-              </span>
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 bg-slate-950/40 dark:bg-black/60 backdrop-blur-[4px] z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
+    >
+      <div className="bg-white dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl shadow-slate-950/10 dark:shadow-black/50 animate-in fade-in zoom-in duration-200">
+        <div className="px-6 py-4.5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/[0.3] dark:bg-slate-900/[0.15] flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-[#25D366]/10 dark:bg-[#25D366]/20 text-[#128C7E] dark:text-[#25D366] rounded-xl flex items-center justify-center shrink-0">
+              <Smartphone className="w-5 h-5" />
             </div>
-            <button
-              onClick={() => {
-                onStopPolling();
-                onClose();
-              }}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-slate-400/20"
-              aria-label="Close modal"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <span className="font-sans font-semibold text-[17px] text-slate-900 dark:text-slate-100 tracking-tight">
+              Link WhatsApp
+            </span>
           </div>
+          <button
+            onClick={handleCancel}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-slate-400/20"
+            aria-label="Close modal"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
 
-          <div className="p-6 space-y-6 text-left">
-            {!pairingCode ? (
-              <form onSubmit={onGeneratePairingCode} className="space-y-6">
-                <div className="space-y-2.5 text-slate-600 dark:text-slate-400">
-                  <p className="text-[13.5px] font-medium text-slate-750 dark:text-slate-300">
-                    Enter the WhatsApp number you want to connect. We&apos;ll send a pairing code to link it.
-                  </p>
-                  <ul className="space-y-1.5 text-[12.5px] font-medium text-slate-500 dark:text-slate-400 pl-1 ml-1 list-disc marker:text-[#25D366]">
-                    <li className="pl-1">Include your country code.</li>
-                    <li className="pl-1">
-                      Example: <span className="font-semibold text-slate-755 dark:text-slate-300 font-mono">+1 234 567 8900</span>
-                    </li>
-                    <li className="pl-1">The pairing code is generated securely and expires after a few minutes.</li>
-                  </ul>
+        <div className="p-6 space-y-5 text-left">
+          {connected ? (
+            <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+              <CheckCircle2 className="w-12 h-12 text-[#25D366]" />
+              <p className="font-semibold text-[15px] text-slate-800 dark:text-slate-100">WhatsApp connected!</p>
+            </div>
+          ) : phase === "select" ? (
+            /* ── Method Selection ── */
+            <div className="space-y-3">
+              <p className="text-[13px] font-medium text-slate-500 dark:text-slate-400 text-center">
+                Choose how you&apos;d like to link your WhatsApp account.
+              </p>
+              <button
+                type="button"
+                onClick={handleSelectQR}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border-2 border-slate-200 dark:border-slate-800 hover:border-[#25D366] dark:hover:border-[#25D366] bg-slate-50 dark:bg-black/10 hover:bg-[#25D366]/5 dark:hover:bg-[#25D366]/5 transition-all duration-200 group cursor-pointer"
+              >
+                <div className="p-2.5 bg-[#25D366]/10 dark:bg-[#25D366]/20 rounded-xl group-hover:bg-[#25D366]/20 transition-colors">
+                  <QrCode className="w-5 h-5 text-[#128C7E] dark:text-[#25D366]" />
                 </div>
-
-                <div className="relative w-full">
-                  <div className="flex justify-between items-center mb-1.5">
-                    <label htmlFor="whatsapp-phone-input" className="block text-[12.5px] font-semibold text-slate-700 dark:text-slate-400">
-                      Phone number
-                    </label>
-                    {phoneNumber && (
-                      <span className="text-[11px] font-medium text-slate-450 dark:text-slate-505 transition-all animate-in fade-in duration-200">
-                        {selectedCountry.name}
-                      </span>
+                <div className="text-left flex-1">
+                  <p className="text-[14px] font-semibold text-slate-800 dark:text-slate-100">Scan QR Code</p>
+                  <p className="text-[12px] text-slate-500 dark:text-slate-400">Use your phone&apos;s camera to scan</p>
+                </div>
+                <span className="text-[10px] font-bold text-[#25D366] bg-[#25D366]/10 px-2 py-0.5 rounded-full">RECOMMENDED</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSelectCode}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border-2 border-slate-200 dark:border-slate-800 hover:border-[#25D366] dark:hover:border-[#25D366] bg-slate-50 dark:bg-black/10 hover:bg-[#25D366]/5 dark:hover:bg-[#25D366]/5 transition-all duration-200 group cursor-pointer"
+              >
+                <div className="p-2.5 bg-[#25D366]/10 dark:bg-[#25D366]/20 rounded-xl group-hover:bg-[#25D366]/20 transition-colors">
+                  <Phone className="w-5 h-5 text-[#128C7E] dark:text-[#25D366]" />
+                </div>
+                <div className="text-left flex-1">
+                  <p className="text-[14px] font-semibold text-slate-800 dark:text-slate-100">Link with Phone Number</p>
+                  <p className="text-[12px] text-slate-500 dark:text-slate-400">Enter a pairing code on your phone</p>
+                </div>
+              </button>
+            </div>
+          ) : method === "code" && !currentValue ? (
+            /* ── Phone Number Input ── */
+            <form onSubmit={handleCodeSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <label className="block text-[13px] font-semibold text-slate-700 dark:text-slate-300">
+                  Phone Number
+                </label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => { setPhone(e.target.value); setPhoneError(null); }}
+                    placeholder="+919876543210"
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-slate-800 rounded-xl text-[14px] font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 focus:border-[#25D366] transition-all"
+                    autoFocus
+                  />
+                </div>
+                {phoneError && (
+                  <p className="text-[12px] font-medium text-red-600 dark:text-red-400">{phoneError}</p>
+                )}
+              </div>
+              <p className="text-[12px] font-medium text-slate-500 dark:text-slate-400">
+                Include country code. E.164 format (e.g., +14155552671).
+              </p>
+              {error && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl">
+                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                  <p className="text-[12.5px] font-medium text-red-700 dark:text-red-400">{error}</p>
+                </div>
+              )}
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPhase("select")}
+                  className="flex-1 inline-flex items-center justify-center font-medium text-[13.5px] rounded-xl h-10 min-h-[40px] bg-transparent hover:bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-slate-400/20 cursor-pointer"
+                >
+                  Back
+                </button>
+                <button
+                  type="submit"
+                  disabled={isLoading || !phone}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 font-medium text-[13.5px] rounded-xl h-10 min-h-[40px] bg-[#25D366] hover:bg-[#20BD5A] text-white transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+                >
+                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Phone className="w-4 h-4" />}
+                  Generate Code
+                </button>
+              </div>
+            </form>
+          ) : (
+            /* ── Auth Display (QR or Code) ── */
+            <>
+              <div className="flex flex-col items-center gap-4">
+                {isLoading || !currentValue ? (
+                  <div className={`${method === "qr" ? "w-[220px] h-[220px]" : "w-full h-[100px]"} flex items-center justify-center rounded-lg bg-slate-50 dark:bg-black/10 border border-slate-200 dark:border-slate-800`}>
+                    {error ? (
+                      <div className="flex flex-col items-center gap-2 px-6 text-center">
+                        <AlertCircle className="w-8 h-8 text-red-500" />
+                        <p className="text-[12.5px] font-medium text-red-600 dark:text-red-400">{error}</p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2">
+                        <Loader2 className="w-8 h-8 animate-spin text-[#25D366]" />
+                        <span className="text-[12.5px] font-medium text-slate-500 dark:text-slate-400">
+                          {method === "qr" ? "Generating QR code..." : "Generating pairing code..."}
+                        </span>
+                      </div>
                     )}
                   </div>
-
-                  <div ref={phoneInputRef} className={`
-                    relative flex items-center w-full h-11 rounded-xl bg-slate-50 dark:bg-black/10 border transition-all duration-200
-                    ${isGeneratingPairingCode ? "opacity-60 cursor-not-allowed" : ""}
-                    ${showCountryDropdown
-                      ? "border-[#25D366] ring-2 ring-[#25D366]/10"
-                      : "border-slate-200 dark:border-slate-800 hover:border-slate-350 dark:hover:border-slate-750"
-                    }
-                  `}>
+                ) : method === "qr" ? (
+                  <div className="relative">
+                    <QrCodeDisplay value={currentValue} />
+                    <div className="absolute inset-0 pointer-events-none ring-1 ring-slate-200 dark:ring-slate-800 rounded-lg" />
+                  </div>
+                ) : (
+                  <div className="w-full flex flex-col items-center justify-center rounded-lg bg-slate-50 dark:bg-black/10 border border-slate-200 dark:border-slate-800 p-6 relative">
+                    <p className="text-[32px] font-mono font-bold tracking-[0.25em] text-slate-900 dark:text-slate-100 select-all">
+                      {currentValue}
+                    </p>
                     <button
-                      ref={countryTriggerRef}
                       type="button"
-                      disabled={isGeneratingPairingCode}
-                      onClick={() => setShowCountryDropdown(!showCountryDropdown)}
-                      aria-haspopup="listbox"
-                      aria-expanded={showCountryDropdown}
-                      aria-label="Select country code"
-                      className="flex items-center justify-between min-w-[110px] h-full pl-3.5 pr-3 hover:bg-slate-100 dark:hover:bg-slate-800/40 rounded-l-xl transition-colors cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-300"
+                      onClick={handleCopyCode}
+                      className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all"
+                      title="Copy code"
                     >
-                      <div className="flex items-center gap-2">
-                        <span className="text-xl leading-none">{flagEmoji(selectedCountry.iso)}</span>
-                        <span className="text-[14px] font-bold font-mono text-slate-800 dark:text-slate-200">{selectedCountry.code}</span>
-                      </div>
-                      <ChevronDown className={`w-4 h-4 ml-1 text-slate-400 transition-transform duration-200 ${showCountryDropdown ? "rotate-180" : ""}`} />
+                      {copied ? <Check className="w-4 h-4 text-[#25D366]" /> : <Copy className="w-4 h-4" />}
                     </button>
-
-                    <div className="w-[1.5px] h-5 bg-slate-200 dark:bg-slate-800 shrink-0" />
-
-                    <input
-                      id="whatsapp-phone-input"
-                      type="tel"
-                      required
-                      disabled={isGeneratingPairingCode}
-                      value={phoneNumber}
-                      onChange={(e) => {
-                        const val = e.target.value.replace(/[^\d\s\-\(\)\+]/g, "");
-                        setPhoneNumber(val);
-                      }}
-                      placeholder={selectedCountry.code === "+1" ? "(201) 555-0123" : selectedCountry.code === "+91" ? "98765 43210" : "Enter phone number"}
-                      className="flex-1 h-full px-3.5 bg-transparent border-0 outline-none focus:outline-none focus:ring-0 text-[14px] font-semibold text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
-                    />
-
-                    {isGeneratingPairingCode && (
-                      <div className="pr-3.5 flex items-center">
-                        <Loader2 className="w-4 h-4 animate-spin text-[#25D366]" />
-                      </div>
-                    )}
                   </div>
-                </div>
+                )}
+              </div>
 
-                <div className="pt-2 flex gap-3">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="flex-1 inline-flex items-center justify-center font-medium text-[13.5px] rounded-xl h-10 min-h-[40px] bg-transparent hover:bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-slate-400/20 cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isGeneratingPairingCode}
-                    className="flex-1 inline-flex items-center justify-center font-medium text-[13.5px] rounded-xl h-10 min-h-[40px] bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-slate-200 text-white dark:text-slate-950 transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-slate-400/20 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
-                  >
-                    {isGeneratingPairingCode ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : null}
-                    Generate Code
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <div className="space-y-6">
-                <div className="text-center space-y-3.5">
-                  <p className="text-[13.5px] text-slate-600 dark:text-slate-400 font-medium">
-                    Enter this pairing code on your mobile device to authorize:
+              {method === "qr" ? (
+                <div className="space-y-1 text-center">
+                  <p className="text-[13.5px] font-medium text-slate-800 dark:text-slate-200">
+                    Scan this QR code using WhatsApp
                   </p>
-
-                  <div className="inline-flex items-center justify-center px-10 py-4.5 bg-[#25D366]/[0.06] dark:bg-[#25D366]/10 border border-[#25D366]/30 dark:border-[#25D366]/40 rounded-2xl shadow-sm shadow-[#25D366]/5">
-                    <span className="font-mono font-bold text-3xl tracking-[0.2em] text-[#128C7E] dark:text-[#25D366] select-all leading-none">
-                      {pairingCode}
-                    </span>
-                  </div>
+                  <p className="text-[12.5px] font-medium text-slate-500 dark:text-slate-400">
+                    Open WhatsApp → Settings → Linked Devices → Link a Device → Scan QR Code
+                  </p>
                 </div>
-
-                <div className="bg-slate-50 dark:bg-slate-900/40 p-5 rounded-2xl border border-slate-100 dark:border-slate-800/80 space-y-3">
-                  <h4 className="font-semibold text-[13px] text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <Link className="w-3.5 h-3.5 text-[#25D366]" /> Instructions:
-                  </h4>
-                  <ol className="text-[12.5px] font-medium text-slate-600 dark:text-slate-400 space-y-2 list-decimal pl-4 leading-relaxed">
-                    <li>Open <strong className="text-slate-900 dark:text-slate-200 font-semibold">WhatsApp</strong> on your phone.</li>
-                    <li>Go to <strong className="text-slate-900 dark:text-slate-200 font-semibold">Settings</strong> / <strong className="text-slate-900 dark:text-slate-200 font-semibold">Menu</strong> &gt; <strong className="text-slate-900 dark:text-slate-200 font-semibold">Linked Devices</strong>.</li>
-                    <li>Select <strong className="text-slate-900 dark:text-slate-200 font-semibold">Link a Device</strong>.</li>
-                    <li>Choose <strong className="text-slate-900 dark:text-slate-200 font-semibold">Link with phone number instead</strong>.</li>
-                    <li>Type the 8-character code shown above.</li>
+              ) : (
+                <div className="space-y-2 text-center">
+                  <p className="text-[13.5px] font-medium text-slate-800 dark:text-slate-200">
+                    Enter this code on your phone
+                  </p>
+                  <ol className="text-[12px] font-medium text-slate-500 dark:text-slate-400 space-y-1 text-left max-w-[280px] mx-auto">
+                    <li>1. Open WhatsApp</li>
+                    <li>2. Go to <span className="font-semibold text-slate-700 dark:text-slate-300">Settings → Linked Devices</span></li>
+                    <li>3. Tap <span className="font-semibold text-slate-700 dark:text-slate-300">Link a Device</span></li>
+                    <li>4. Tap <span className="font-semibold text-slate-700 dark:text-slate-300">Link with Phone Number Instead</span></li>
+                    <li>5. Enter the code above</li>
                   </ol>
                 </div>
+              )}
 
-                <div className="flex items-center justify-center gap-2 py-1 text-[#25D366] font-semibold text-[13px]">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="animate-pulse">Waiting for WhatsApp authorization...</span>
-                </div>
+              <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-[#25D366]" />
+                <span className="text-[13px] font-semibold text-[#128C7E] dark:text-[#25D366] animate-pulse">
+                  Waiting for authorization...
+                </span>
+                {!!currentValue && !error && (
+                  <span className="text-[12px] font-mono font-semibold text-slate-500 dark:text-slate-400">
+                    ({secondsLeft}s)
+                  </span>
+                )}
+              </div>
 
-                <div className="flex justify-end pt-1">
+              {error && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl text-left">
+                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                  <p className="text-[12.5px] font-medium text-red-700 dark:text-red-400">{error}</p>
                   <button
-                    onClick={() => {
-                      onStopPolling();
-                      onClose();
-                    }}
-                    className="w-full inline-flex items-center justify-center font-medium text-[13.5px] rounded-xl h-10 min-h-[40px] bg-transparent hover:bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-slate-400/20 cursor-pointer"
+                    type="button"
+                    onClick={handleRetry}
+                    className="ml-auto shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[12px] font-semibold cursor-pointer"
                   >
-                    Cancel & Close
+                    <RefreshCw className="w-3.5 h-3.5" /> Retry
                   </button>
                 </div>
+              )}
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="flex-1 inline-flex items-center justify-center font-medium text-[13.5px] rounded-xl h-10 min-h-[40px] bg-transparent hover:bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-slate-400/20 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={method === "qr" ? onRefreshQR : onRefreshCode}
+                  disabled={isLoading || !currentValue}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 font-medium text-[13.5px] rounded-xl h-10 min-h-[40px] bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-slate-200 text-white dark:text-slate-950 transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-slate-400/20 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  {method === "qr" ? "Refresh QR" : "New Code"}
+                </button>
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
       </div>
-
-      {showCountryDropdown && countryTriggerRef.current && createPortal(
-        <CountryDropdownPortal
-          selectedCountry={selectedCountry}
-          countrySearch={countrySearch}
-          setCountrySearch={setCountrySearch}
-          setSelectedCountry={setSelectedCountry}
-          setShowCountryDropdown={setShowCountryDropdown}
-          triggerRef={phoneInputRef}
-          whatsappPhoneInputId="whatsapp-phone-input"
-        />,
-        document.body
-      )}
-    </>
+    </div>
   );
+}
+
+function validatePhone(value: string): string | null {
+  if (!value) return "Phone number is required.";
+  if (!E164_REGEX.test(value)) return "Use E.164 format (e.g., +919876543210).";
+  return null;
+}
+
+/** Minimal QR renderer using a canvas — same as the old qr-display.tsx. */
+function QrCodeDisplay({ value }: { value: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (!value || !canvasRef.current) return;
+    // Dynamically import qrcode to avoid SSR issues
+    import("qrcode").then((QRCode) => {
+      QRCode.toCanvas(canvasRef.current!, value, {
+        width: 220,
+        margin: 2,
+        color: { dark: "#000000", light: "#ffffff" },
+      });
+    });
+  }, [value]);
+
+  return <canvas ref={canvasRef} className="rounded-lg" />;
 }
 
 export { WhatsAppConnectionModal };

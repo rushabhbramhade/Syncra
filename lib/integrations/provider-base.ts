@@ -31,7 +31,12 @@ export interface IntegrationProvider {
 
   // Tool execution
   getTools(): MCPTool[];
-  executeTool(accessToken: string, toolName: string, args: Record<string, unknown>): Promise<unknown>;
+  executeTool(
+    accessToken: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    ctx?: { userId?: string }
+  ): Promise<unknown>;
 
   // ─── Optional: capability system (Phase 0+, architecture §9) ──────────────
   // Declared capabilities. Defaults to a registry lookup when absent; providers

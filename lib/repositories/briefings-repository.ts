@@ -26,6 +26,9 @@ export interface BriefingRecord {
   generated_at: string;
   ai_model?: string | null;
   status: string;
+  source_freshness?: Record<string, string | null> | null;
+  provider_health?: Record<string, unknown> | null;
+  archived_at?: string | null;
   created_at?: string;
 }
 
@@ -55,6 +58,37 @@ export interface BriefingHistoryRecord {
   errors?: string | null;
   ai_tokens_used?: number | null;
   trigger_source: string;
+}
+
+export interface BriefingGenerationRunRecord {
+  id?: string;
+  schedule_id?: string | null;
+  user_id: string;
+  status: "pending" | "running" | "success" | "failed";
+  attempt_number: number;
+  started_at?: string;
+  completed_at?: string | null;
+  error_message?: string | null;
+  briefing_id?: string | null;
+  duration_ms?: number | null;
+  trigger_source: "manual" | "schedule";
+  created_at?: string;
+}
+
+export interface BriefingDeliveryRecord {
+  id?: string;
+  briefing_item_id: string;
+  user_id: string;
+  platform: string;
+  recipient?: string | null;
+  body: string;
+  status: "pending" | "sent" | "failed";
+  error_code?: string | null;
+  error_message?: string | null;
+  provider_response?: Record<string, unknown> | null;
+  attempted_at?: string;
+  completed_at?: string | null;
+  created_at?: string;
 }
 
 export class BriefingsRepository {
@@ -166,6 +200,7 @@ export class BriefingsRepository {
       .from("briefings")
       .select("*")
       .eq("user_id", userId)
+      .is("archived_at", null)
       .order("generated_at", { ascending: false });
 
     if (options?.id) {
@@ -362,5 +397,138 @@ export class BriefingsRepository {
 
     if (error || !data) return [];
     return data as BriefingHistoryRecord[];
+  }
+
+  // ── BRIEFING GENERATION RUNS (Phase 1.1 idempotency) ──
+
+  /**
+   * Atomically claim a schedule for execution.
+   * Returns the schedule when claimed, null when another worker holds
+   * the lock or the schedule no longer exists.
+   * Stale locks (older than `staleLockMs`) are recoverable.
+   */
+  async claimSchedule(id: string, workerId: string, staleLockMs = 10 * 60 * 1000): Promise<BriefingScheduleRecord | null> {
+    const staleBefore = new Date(Date.now() - staleLockMs).toISOString();
+    const { data, error } = await this.db.database
+      .from("briefing_schedules")
+      .update({ locked_at: new Date().toISOString(), locked_by: workerId })
+      .eq("id", id)
+      .or(`locked_at.is.null,locked_at.lt.${staleBefore}`)
+      .select()
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as BriefingScheduleRecord;
+  }
+
+  /** Release the lock and persist terminal schedule state. */
+  async releaseSchedule(
+    id: string,
+    outcome: { last_run: string; next_run: string; last_error?: string | null }
+  ): Promise<void> {
+    await this.db.database
+      .from("briefing_schedules")
+      .update({
+        locked_at: null,
+        locked_by: null,
+        last_run: outcome.last_run,
+        next_run: outcome.next_run,
+        last_error: outcome.last_error ?? null,
+        last_error_at: outcome.last_error ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+  }
+
+  /** Release the lock without advancing next_run (transient failure; will retry). */
+  async releaseScheduleTransient(id: string): Promise<void> {
+    await this.db.database
+      .from("briefing_schedules")
+      .update({
+        locked_at: null,
+        locked_by: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+  }
+
+  async createRun(run: Omit<BriefingGenerationRunRecord, "id" | "created_at">): Promise<BriefingGenerationRunRecord> {
+    const { data, error } = await this.db.database
+      .from("briefing_generation_runs")
+      .insert([{ ...run, status: run.status || "pending" }])
+      .select()
+      .single();
+    if (error) throw new Error(`Failed to create briefing run: ${error.message}`);
+    return data as BriefingGenerationRunRecord;
+  }
+
+  async completeRun(runId: string, briefingId: string, durationMs: number): Promise<void> {
+    await this.db.database
+      .from("briefing_generation_runs")
+      .update({
+        status: "success",
+        briefing_id: briefingId,
+        duration_ms: durationMs,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", runId);
+  }
+
+  async failRun(runId: string, errorMessage: string, durationMs: number): Promise<void> {
+    await this.db.database
+      .from("briefing_generation_runs")
+      .update({
+        status: "failed",
+        error_message: errorMessage,
+        duration_ms: durationMs,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", runId);
+  }
+
+  async findRunsBySchedule(scheduleId: string, limit = 10): Promise<BriefingGenerationRunRecord[]> {
+    const { data, error } = await this.db.database
+      .from("briefing_generation_runs")
+      .select("*")
+      .eq("schedule_id", scheduleId)
+      .order("started_at", { ascending: false })
+      .limit(limit);
+    if (error || !data) return [];
+    return data as BriefingGenerationRunRecord[];
+  }
+
+  // ── DELIVERIES (Phase 1.4 outbound audit) ──
+
+  async createDelivery(delivery: Omit<BriefingDeliveryRecord, "id" | "created_at">): Promise<BriefingDeliveryRecord> {
+    const { data, error } = await this.db.database
+      .from("briefing_message_deliveries")
+      .insert([{ ...delivery, status: delivery.status || "pending" }])
+      .select()
+      .single();
+    if (error) throw new Error(`Failed to create delivery record: ${error.message}`);
+    return data as BriefingDeliveryRecord;
+  }
+
+  async completeDelivery(id: string, status: "sent" | "failed", providerResponse?: Record<string, unknown> | null, errorMessage?: string | null): Promise<void> {
+    await this.db.database
+      .from("briefing_message_deliveries")
+      .update({
+        status,
+        provider_response: providerResponse ?? null,
+        error_message: errorMessage ?? null,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+  }
+
+  async findLatestDeliveryForItem(itemId: string): Promise<BriefingDeliveryRecord | null> {
+    const { data, error } = await this.db.database
+      .from("briefing_message_deliveries")
+      .select("*")
+      .eq("briefing_item_id", itemId)
+      .order("attempted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as BriefingDeliveryRecord;
   }
 }

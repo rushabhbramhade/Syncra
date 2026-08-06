@@ -50,6 +50,13 @@ export class TelegramService {
     }
     const res = await fetchWithRetry(`${TELEGRAM_API_BASE}/bot${token}/getUpdates?${params}`);
     const data = await res.json();
+    // getUpdates conflicts with an active webhook (Telegram returns 409
+    // "Conflict: terminated by other getUpdates request"). In that mode the
+    // webhook route already persists messages to unified_messages — treat it
+    // as "no pending updates" instead of an error.
+    if (!data.ok && /conflict|terminated by other getUpdates/i.test(data.description || "")) {
+      return [];
+    }
     if (!data.ok) {
       throw new Error(`Telegram getUpdates failed: ${data.description || "unknown error"}`);
     }

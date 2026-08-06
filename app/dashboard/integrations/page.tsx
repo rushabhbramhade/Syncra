@@ -17,9 +17,14 @@ import {
   disconnectGithubAction,
 } from "@/app/actions/integrations";
 import {
-  requestWhatsAppPairingCodeAction,
-  getWhatsAppStatusAction,
-  disconnectWhatsAppAction,
+  requestWhatsAppPairingAction,
+  getWhatsAppPairingStatusAction,
+  refreshWhatsAppPairingAction,
+  cancelWhatsAppPairingAction,
+  startWhatsAppQRAction,
+  getWhatsAppQRAction,
+  refreshWhatsAppQRAction,
+  cancelWhatsAppQRAction,
 } from "@/app/actions/whatsapp";
 import { useIntegrations } from "@/hooks/useIntegrations";
 import { ACTIVE_PROVIDERS, getProviderMeta } from "@/features/integrations/constants/providers";
@@ -32,7 +37,6 @@ import { Search, ShieldCheck, CheckCircle2, AlertCircle, X, AlertTriangle, Exter
 import dynamic from "next/dynamic";
 import type { WorkspaceIntegration } from "@/app/actions/integrations";
 import type { IntegrationSettingsPatch } from "@/hooks/useIntegrations";
-import { COUNTRIES } from "@/components/dashboard/integrations/country-dropdown-portal";
 
 const WhatsAppConnectionModal = dynamic(() => import("@/components/dashboard/integrations/whatsapp-connection-modal").then(mod => mod.WhatsAppConnectionModal), { ssr: false });
 const TelegramConnectionModal = dynamic(() => import("@/components/dashboard/integrations/telegram-connection-modal").then(mod => mod.TelegramConnectionModal), { ssr: false });
@@ -48,6 +52,7 @@ export default function IntegrationsPage() {
     integrations,
     isLoading: hookLoading,
     lastSync,
+    refresh,
     runSync,
     runRefreshToken,
     disconnect: hookDisconnect,
@@ -62,6 +67,7 @@ export default function IntegrationsPage() {
   const [isDrawerOperating, setIsDrawerOperating] = useState(false);
   const [drawerOperatingAction, setDrawerOperatingAction] = useState<"sync" | "refresh" | null>(null);
   const [isSyncing, setIsSyncing] = useState<Record<string, boolean>>({});
+  const [isDisconnecting, setIsDisconnecting] = useState<Record<string, boolean>>({});
 
   const [isGoogleConfiguredOnServer, setIsGoogleConfiguredOnServer] = useState(true);
   const [showConfigAlertModal, setShowConfigAlertModal] = useState(false);
@@ -86,13 +92,13 @@ export default function IntegrationsPage() {
   const [showTelegramConnectModal, setShowTelegramConnectModal] = useState(false);
   const [showDiscordConnectModal, setShowDiscordConnectModal] = useState(false);
   const [showWhatsAppConnectModal, setShowWhatsAppConnectModal] = useState(false);
-  const [whatsappPhoneNumber, setWhatsAppPhoneNumber] = useState("");
-  const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
-  const [showCountryDropdown, setShowCountryDropdown] = useState(false);
-  const [countrySearch, setCountrySearch] = useState("");
-  const [whatsappPairingCode, setWhatsAppPairingCode] = useState("");
-  const [isGeneratingPairingCode, setIsGeneratingPairingCode] = useState(false);
-  const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [whatsappQR, setWhatsAppQR] = useState<string | null>(null);
+  const [whatsappCode, setWhatsappCode] = useState<string | null>(null);
+  const [isWhatsAppLoading, setIsWhatsAppLoading] = useState(false);
+  const [whatsappError, setWhatsAppError] = useState<string | null>(null);
+  const [whatsappConnected, setWhatsAppConnected] = useState(false);
+  const [whatsappPhone, setWhatsappPhone] = useState<string>("");
+  const [whatsappMethod, setWhatsappMethod] = useState<"qr" | "code">("qr");
 
   const isMounted = useRef(true);
 
@@ -102,26 +108,137 @@ export default function IntegrationsPage() {
     return () => { isMounted.current = false; };
   }, []);
 
-  // ── WhatsApp polling ──
-  const stopWhatsAppPolling = useCallback(() => {
-    if (pollingTimerRef.current) { clearInterval(pollingTimerRef.current); pollingTimerRef.current = null; }
-  }, []);
+  // ── WhatsApp QR flow ──
+  const handleWhatsAppStartQR = useCallback(async () => {
+    if (!user) return;
+    setIsWhatsAppLoading(true);
+    setWhatsAppError(null);
+    setWhatsAppQR(null);
+    setWhatsAppConnected(false);
+    setWhatsappMethod("qr");
+    try {
+      const res = await startWhatsAppQRAction(user.id);
+      if (res.success && res.qr) {
+        setWhatsAppQR(res.qr);
+      } else {
+        setWhatsAppError(res.error || "Failed to start WhatsApp pairing.");
+      }
+    } catch (err: unknown) {
+      setWhatsAppError(err instanceof Error ? err.message : "Failed to start WhatsApp pairing.");
+    } finally {
+      setIsWhatsAppLoading(false);
+    }
+  }, [user]);
 
-  const startWhatsAppPolling = useCallback((userId: string) => {
-    stopWhatsAppPolling();
+  const handleWhatsAppRefreshQR = useCallback(async () => {
+    if (!user) return;
+    setIsWhatsAppLoading(true);
+    setWhatsAppError(null);
+    try {
+      const res = await refreshWhatsAppQRAction(user.id);
+      if (res.success && res.qr) {
+        setWhatsAppQR(res.qr);
+      } else {
+        setWhatsAppError(res.error || "Failed to refresh QR code.");
+      }
+    } catch (err: unknown) {
+      setWhatsAppError(err instanceof Error ? err.message : "Failed to refresh QR code.");
+    } finally {
+      setIsWhatsAppLoading(false);
+    }
+  }, [user]);
+
+  // ── WhatsApp pairing code flow ──
+  const handleWhatsAppStartCode = useCallback(async (phone: string) => {
+    if (!user) return;
+    setIsWhatsAppLoading(true);
+    setWhatsAppError(null);
+    setWhatsappCode(null);
+    setWhatsAppConnected(false);
+    setWhatsappPhone(phone);
+    setWhatsappMethod("code");
+    try {
+      const res = await requestWhatsAppPairingAction(user.id, phone);
+      if (res.success && res.code) {
+        setWhatsappCode(res.code);
+      } else {
+        setWhatsAppError(res.error || "Failed to generate pairing code.");
+      }
+    } catch (err: unknown) {
+      setWhatsAppError(err instanceof Error ? err.message : "Failed to generate pairing code.");
+    } finally {
+      setIsWhatsAppLoading(false);
+    }
+  }, [user]);
+
+  const handleWhatsAppRefreshCode = useCallback(async () => {
+    if (!user || !whatsappPhone) return;
+    setIsWhatsAppLoading(true);
+    setWhatsAppError(null);
+    try {
+      const res = await refreshWhatsAppPairingAction(user.id, whatsappPhone);
+      if (res.success && res.code) {
+        setWhatsappCode(res.code);
+      } else {
+        setWhatsAppError(res.error || "Failed to refresh pairing code.");
+      }
+    } catch (err: unknown) {
+      setWhatsAppError(err instanceof Error ? err.message : "Failed to refresh pairing code.");
+    } finally {
+      setIsWhatsAppLoading(false);
+    }
+  }, [user, whatsappPhone]);
+
+  // ── WhatsApp cancel (both flows) ──
+  const handleWhatsAppCancel = useCallback(async () => {
+    if (!user) return;
+    setWhatsAppConnected(false);
+    setWhatsAppQR(null);
+    setWhatsappCode(null);
+    setWhatsappPhone("");
+    try {
+      await cancelWhatsAppPairingAction(user.id);
+      await cancelWhatsAppQRAction(user.id);
+    } catch {}
+  }, [user]);
+
+  // Poll WhatsApp status every 1s while auth is in progress
+  const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    const activeValue = whatsappMethod === "qr" ? whatsappQR : whatsappCode;
+    if (!activeValue || whatsappConnected || !user) {
+      if (pollingTimerRef.current) { clearInterval(pollingTimerRef.current); pollingTimerRef.current = null; }
+      return;
+    }
     pollingTimerRef.current = setInterval(async () => {
       try {
-        const res = await getWhatsAppStatusAction(userId);
-        if (res.success && res.status?.status === "active") {
-          stopWhatsAppPolling();
-          setSuccessMessage("WhatsApp connected successfully!");
-          setShowWhatsAppConnectModal(false);
-          setWhatsAppPairingCode("");
-          setWhatsAppPhoneNumber("");
+        if (whatsappMethod === "qr") {
+          const res = await getWhatsAppQRAction(user.id);
+          if (res.success && res.status === "connected") {
+            if (pollingTimerRef.current) { clearInterval(pollingTimerRef.current); pollingTimerRef.current = null; }
+            setWhatsAppConnected(true);
+            setSuccessMessage("WhatsApp connected successfully!");
+            refresh();
+          }
+        } else {
+          const res = await getWhatsAppPairingStatusAction(user.id);
+          if (res.success && res.status === "connected") {
+            if (pollingTimerRef.current) { clearInterval(pollingTimerRef.current); pollingTimerRef.current = null; }
+            setWhatsAppConnected(true);
+            setSuccessMessage("WhatsApp connected successfully!");
+            refresh();
+          } else if (res.success && res.status === "expired") {
+            if (whatsappPhone) {
+              const r = await refreshWhatsAppPairingAction(user.id, whatsappPhone);
+              if (r.success && r.code) setWhatsappCode(r.code);
+            }
+          }
         }
       } catch {}
-    }, 3000);
-  }, [stopWhatsAppPolling]);
+    }, 1000);
+    return () => { if (pollingTimerRef.current) clearInterval(pollingTimerRef.current); };
+  }, [whatsappQR, whatsappCode, whatsappConnected, user, whatsappMethod, whatsappPhone, refresh]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -132,17 +249,15 @@ export default function IntegrationsPage() {
       }
       if (e.key === "Escape") {
         if (showSearch) { setShowSearch(false); return; }
-        if (showWhatsAppConnectModal) { stopWhatsAppPolling(); setShowWhatsAppConnectModal(false); }
+        if (showWhatsAppConnectModal) { handleWhatsAppCancel(); setShowWhatsAppConnectModal(false); }
         if (selectedProvider) setSelectedProvider(null);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showWhatsAppConnectModal, selectedProvider, showSearch, stopWhatsAppPolling]);
+  }, [showWhatsAppConnectModal, selectedProvider, showSearch, handleWhatsAppCancel]);
 
-  useEffect(() => {
-    return () => { if (pollingTimerRef.current) clearInterval(pollingTimerRef.current); };
-  }, []);
+
 
   useEffect(() => {
     const success = searchParams.get("success");
@@ -178,71 +293,48 @@ export default function IntegrationsPage() {
   const handleTelegramConnect = useCallback(async (botToken: string) => {
     if (!user) return { success: false, error: "Not authenticated" };
     const res = await connectTelegramAction(user.id, botToken);
-    if (res.success) setSuccessMessage("Telegram connected successfully!");
+    if (res.success) {
+      setSuccessMessage("Telegram connected successfully!");
+      refresh();
+    }
     return res;
-  }, [user]);
+  }, [user, refresh]);
 
   const handleDiscordConnect = useCallback(async () => {
     if (!user) return { success: false, error: "Not authenticated" };
     const res = await connectDiscordAction(user.id);
-    if (res.success) setSuccessMessage("Discord connected successfully!");
-    return res;
-  }, [user]);
-
-  const handleWhatsAppGenerateCode = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!whatsappPhoneNumber.trim() || !user) return;
-    setIsGeneratingPairingCode(true);
-    setErrorMessage(null);
-    try {
-      let cleanInput = whatsappPhoneNumber.trim().replace(/\D/g, "");
-      const countryDigits = selectedCountry.code.replace(/\D/g, "");
-      if (cleanInput.startsWith(countryDigits)) cleanInput = cleanInput.substring(countryDigits.length);
-      const fullNumber = `${countryDigits}${cleanInput}`;
-      const res = await requestWhatsAppPairingCodeAction(user.id, fullNumber);
-      if (res.success && res.pairingCode) {
-        setWhatsAppPairingCode(res.pairingCode);
-        startWhatsAppPolling(user.id);
-      } else {
-        setErrorMessage(res.error || "Failed to generate pairing code.");
-      }
-    } catch (err: unknown) {
-      setErrorMessage(err instanceof Error ? err.message : "An unexpected error occurred.");
-    } finally {
-      setIsGeneratingPairingCode(false);
+    if (res.success) {
+      setSuccessMessage("Discord connected successfully!");
+      refresh();
     }
-  }, [whatsappPhoneNumber, user, selectedCountry, startWhatsAppPolling]);
+    return res;
+  }, [user, refresh]);
 
   // ── Disconnect handlers ──
   const handleDisconnect = useCallback(async (provider: string) => {
     if (!user) return;
+    setErrorMessage(null);
+    if (provider === "whatsapp") { if (pollingTimerRef.current) { clearInterval(pollingTimerRef.current); pollingTimerRef.current = null; } }
+    setIsDisconnecting((prev) => ({ ...prev, [provider]: true }));
     try {
-      if (provider === "gmail") {
-        await disconnectGmailConnection(user.id);
-      } else if (provider === "whatsapp") {
-        stopWhatsAppPolling();
-        await disconnectWhatsAppAction(user.id);
-      } else if (provider === "telegram") {
-        await disconnectTelegramWebhookAction(user.id);
-        await disconnectIntegration(user.id, "telegram");
-      } else if (provider === "linkedin") {
-        await disconnectLinkedinAction(user.id);
-      } else if (provider === "github") {
-        await disconnectGithubAction(user.id);
+      const res = await hookDisconnect(provider);
+      if (res.success) {
+        setSuccessMessage(`${getProviderMeta(provider).name} disconnected.`);
       } else {
-        await hookDisconnect(provider);
+        setErrorMessage(res.error || "Disconnect failed.");
       }
-      setSuccessMessage(`${getProviderMeta(provider).name} disconnected.`);
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : "Disconnect failed.");
+    } finally {
+      setIsDisconnecting((prev) => ({ ...prev, [provider]: false }));
     }
-  }, [user, hookDisconnect, stopWhatsAppPolling]);
+  }, [user, hookDisconnect]);
 
   // ── Card action handlers ──
   const handleCardConnect = useCallback((integration: WorkspaceIntegration) => {
     const provider = integration.provider;
     if (provider === "gmail") handleGmailConnect();
-    else if (provider === "whatsapp") { setWhatsAppPhoneNumber(""); setSelectedCountry(COUNTRIES[0]); setShowWhatsAppConnectModal(true); }
+    else if (provider === "whatsapp") { setWhatsappCode(null); setWhatsAppError(null); setWhatsAppConnected(false); setShowWhatsAppConnectModal(true); }
     else if (provider === "telegram") setShowTelegramConnectModal(true);
     else if (provider === "discord") setShowDiscordConnectModal(true);
     else handleOAuthConnect(provider);
@@ -456,6 +548,7 @@ export default function IntegrationsPage() {
                 onSync={() => handleCardSync(fallbackIntegration)}
                 onOpenDetails={() => handleOpenDetails(fallbackIntegration)}
                 isSyncing={isSyncing[meta.id]}
+                isDisconnecting={isDisconnecting[meta.id]}
               />
             );
           })}
@@ -503,19 +596,17 @@ export default function IntegrationsPage() {
       />
       <WhatsAppConnectionModal
         isOpen={showWhatsAppConnectModal}
-        onClose={() => { stopWhatsAppPolling(); setShowWhatsAppConnectModal(false); }}
-        pairingCode={whatsappPairingCode}
-        phoneNumber={whatsappPhoneNumber}
-        setPhoneNumber={setWhatsAppPhoneNumber}
-        selectedCountry={selectedCountry}
-        setSelectedCountry={setSelectedCountry}
-        showCountryDropdown={showCountryDropdown}
-        setShowCountryDropdown={setShowCountryDropdown}
-        countrySearch={countrySearch}
-        setCountrySearch={setCountrySearch}
-        isGeneratingPairingCode={isGeneratingPairingCode}
-        onGeneratePairingCode={handleWhatsAppGenerateCode}
-        onStopPolling={stopWhatsAppPolling}
+        onClose={() => { handleWhatsAppCancel(); setShowWhatsAppConnectModal(false); }}
+        qr={whatsappQR}
+        code={whatsappCode}
+        isLoading={isWhatsAppLoading}
+        error={whatsappError}
+        connected={whatsappConnected}
+        onStartQR={handleWhatsAppStartQR}
+        onRefreshQR={handleWhatsAppRefreshQR}
+        onStartCode={(phone: string) => handleWhatsAppStartCode(phone)}
+        onRefreshCode={handleWhatsAppRefreshCode}
+        onCancel={handleWhatsAppCancel}
       />
 
       {/* Config Alert Modal */}

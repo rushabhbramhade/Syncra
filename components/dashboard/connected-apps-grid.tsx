@@ -17,9 +17,13 @@ interface ConnectedAppsGridProps {
 export function ConnectedAppsGrid({ connectedApps }: ConnectedAppsGridProps) {
   const router = useRouter();
 
+  // Connected first, then disconnected — so newly connected integrations
+  // surface instead of being cut off by the 4-card cap.
+  const sorted = [...connectedApps].sort((a, b) => Number(b.connected) - Number(a.connected));
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {connectedApps.slice(0, 4).map((app) => (
+      {sorted.slice(0, 4).map((app) => (
         <div key={app.id} className="p-5 rounded-2xl bg-surface-white border-[2.5px] border-border-mist flex items-center justify-between hover:border-text-fog hover:shadow-flat-sm transition-all">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-background-mist border-[1.5px] border-border-mist flex items-center justify-center">

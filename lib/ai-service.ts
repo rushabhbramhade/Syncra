@@ -27,9 +27,18 @@ ${JSON.stringify(rawContext, null, 2)}
 </data_context>`;
 }
 
+// Estimate input tokens (chars/4) and pick a completion budget that fits the
+// model's real context without tripping a "Requested tokens > Available" 400.
+function adaptMaxTokens(inputLen: number): number {
+  const inputTokens = Math.ceil(inputLen / 4);
+  // Keep some headroom for the response; never go above a sane JSON cap.
+  return Math.max(512, Math.min(8000, 16000 - inputTokens));
+}
+
 export async function generateJsonResponse<T>(
   systemPrompt: string,
-  userData?: Record<string, unknown>
+  userData?: Record<string, unknown>,
+  options?: { temperature?: number }
 ): Promise<T | null> {
   const client = createClient();
   if (!client) {
@@ -38,6 +47,8 @@ export async function generateJsonResponse<T>(
   }
 
   const contextBlock = userData ? wrapDataContext(userData) : "";
+  const inputLen = contextBlock.length + (systemPrompt?.length || 0);
+  const max_tokens = adaptMaxTokens(inputLen);
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     {
@@ -62,6 +73,8 @@ export async function generateJsonResponse<T>(
         const response = await client.chat.completions.create({
           model,
           messages,
+          max_tokens,
+          temperature: options?.temperature ?? 0.7,
           response_format: { type: "json_object" },
         });
 

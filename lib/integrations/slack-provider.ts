@@ -18,7 +18,7 @@ export class SlackApiService {
   static getAuthUrl(clientId: string, redirectUri: string | null, state: string, codeChallenge?: string): string {
     const params = new URLSearchParams({
       client_id: clientId,
-      scope: "channels:read,channels:history,chat:write,users:read,team:read,im:read",
+      scope: "channels:read,channels:history,chat:write,users:read,team:read,im:read,im:history,groups:read,groups:history,mpim:read,mpim:history",
       state,
     });
     if (redirectUri) {
@@ -104,12 +104,17 @@ export class SlackApiService {
   }
 
   static async listChannels(accessToken: string): Promise<unknown[]> {
-    const res = await fetchWithRetry(`${this.baseUrl}/conversations.list?types=public_channel&limit=100`, {
+    const res = await fetchWithRetry(`${this.baseUrl}/conversations.list?types=public_channel,private_channel,mpim,im&limit=100`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) throw new Error(`Slack conversations.list failed: ${res.statusText}`);
     const data = await res.json();
-    if (!data.ok) throw new Error(`Slack API error: ${data.error}`);
+    if (!data.ok) {
+      const required = "channels:read,channels:history,groups:read,groups:history,im:read,im:history,mpim:read,mpim:history";
+      throw new Error(data.error === "missing_scope"
+        ? `Slack missing OAuth scopes — reconnect to grant: ${required}`
+        : `Slack API error: ${data.error}`);
+    }
     return data.channels || [];
   }
 
@@ -117,7 +122,7 @@ export class SlackApiService {
     const channels = await this.listChannels(accessToken);
     if (!channels.length) return [];
     const channelIds = (channels as Array<{ id: string; name: string }>)
-      .slice(0, 3)
+      .slice(0, 5)
       .map(c => c.id);
     const allMessages: unknown[] = [];
     for (const channelId of channelIds) {
@@ -149,8 +154,11 @@ export class SlackProvider implements IntegrationProvider {
     "users:read",
     "team:read",
     "im:read",
+    "im:history",
     "mpim:read",
+    "mpim:history",
     "groups:read",
+    "groups:history",
   ];
 
   private getClientId(): string {

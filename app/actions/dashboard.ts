@@ -3,6 +3,7 @@
 import { executeMCPAction } from "./integrations";
 import { generateJsonResponse } from "@/lib/ai-service";
 import { requireOwnership } from "@/lib/auth-guard";
+import { BriefingIntelligenceContent } from "@/lib/briefing-intelligence";
 
 export interface DashboardBriefData {
   importantCount: number;
@@ -20,6 +21,7 @@ export interface DashboardBriefData {
     description: string;
     priority: "High" | "Medium" | "Low";
   }[];
+  intelligence?: BriefingIntelligenceContent;
 }
 
 const ALL_PROVIDERS = ["gmail", "outlook", "slack", "whatsapp", "telegram", "discord", "linkedin", "github", "calendar", "notion", "linear"] as const;
@@ -137,10 +139,6 @@ function extractText(item: Record<string, unknown>): string {
   return i.text || i.snippet || i.message || i.subject || i.title || i.headline || i.body || i.summary || i.issue?.title || i.repository?.full_name || i.eventType || i.pageTitle || JSON.stringify(item).slice(0, 120);
 }
 
-function extractSender(item: Record<string, unknown>): string {
-  return (item as any).from || (item as any).sender || (item as any).author || "Unknown";
-}
-
 function categorizePlatform(platform: string): string {
   if (platform === "gmail" || platform === "outlook") return "email";
   if (platform === "slack" || platform === "whatsapp" || platform === "telegram" || platform === "discord") return "messages";
@@ -159,7 +157,6 @@ function buildBriefFromData(platformData: Record<string, { items: Record<string,
 
     for (const item of data.items) {
       const text = extractText(item);
-      const sender = extractSender(item);
       totalImportant++;
       const category = categorizePlatform(platform);
 
@@ -215,8 +212,18 @@ export async function generateDashboardBrief(userId: string, connectedPlatforms:
   "priorityCount": (number),
   "followUpsCount": (number),
   "briefItems": [{"platform": "gmail|slack|whatsapp|telegram|discord|linkedin|github", "text": "summary string", "category": "email|messages|tasks|meetings|followUps|activity"}],
-  "priorityItems": [{"platform": "gmail|slack|whatsapp|telegram|discord|linkedin|github", "title": "short title", "time": "time string", "description": "brief description", "priority": "High|Medium|Low"}]
-}`;
+  "priorityItems": [{"platform": "gmail|slack|whatsapp|telegram|discord|linkedin|github", "title": "short title", "time": "time string", "description": "brief description", "priority": "High|Medium|Low"}],
+  "intelligence": {
+    "health": { "overall": (0-100), "breakdown": [{"name": "Communication|Development|Meetings|Productivity|Response Time|Pending Work", "score": (0-100), "reason": "why, referencing actual items or 'insufficient data'" }], "summary": "1-2 sentence health summary" },
+    "insights": [{"text": "insight drawn ONLY from actual items", "type": "pattern|warning|opportunity|concept", "importance": "high|medium|low"}],
+    "relationships": [{"title": "grouped topic", "summary": "how items relate", "platforms": ["names"], "items": [{"platform": "name", "title": "item"}]}],
+    "recommendations": [{"text": "actionable advice", "type": "reply_email|prepare_meeting|finish_task|contact_client|schedule_follow_up", "platform": "name", "sourceId": null, "priority": "high|medium|low", "reason": "why this matters, referencing actual items", "confidence": (0-100), "affectedPlatforms": ["names"]}],
+    "timeline": [{"time": "HH:MM", "title": "event", "platform": "name"}],
+    "confidence": { "overall": (0-100), "reason": "how certain given available data", "missingData": ["what is missing"] },
+    "sourceStats": [{"platform": "name", "syncStatus": "ok|partial|error|skipped", "itemsProcessed": (number), "lastSync": "timestamp or omit"}]
+  }
+}
+CRITICAL: Only report data actually present in the platform context. Never invent items, health reasons, insights, or recommendations. If a dimension lacks data, set its reason to 'insufficient data' and lower confidence. Only set lastSync if present in the data.`;
         const parsed = await generateJsonResponse<DashboardBriefData>(systemPrompt, platformData as any);
         if (parsed) return parsed;
       } catch (e) {

@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "analyze": "cross-env ANALYZE=true next build",
     "test": "npx playwright test",
+    "test:pipeline": "node --test tests/briefing-pipeline.test.ts",
     "test:headed": "npx playwright test --headed",
     "test:debug": "npx playwright test --debug"
   },
@@ -25,6 +26,7 @@
     "openai": "^6.46.0",
     "pino": "^10.3.1",
     "playwright": "^1.61.1",
+    "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "tailwind-merge": "^3.6.0",
@@ -35,6 +37,7 @@
     "@tailwindcss/postcss": "^4",
     "@trigger.dev/build": "4.5.4",
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "cross-env": "^10.1.0",
