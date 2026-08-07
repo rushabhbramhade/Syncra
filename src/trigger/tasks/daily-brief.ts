@@ -3,7 +3,7 @@ import { sendNotification } from "./notification-send";
 import { createAdminDb } from "@/lib/db";
 import { NotificationPreferencesRepository } from "@/lib/repositories/notification-preferences-repository";
 import { AISummaryCacheRepository } from "@/lib/repositories/ai-summary-cache-repository";
-import { generateJsonResponse } from "@/lib/ai-service";
+import { buildGroundedBriefNotification } from "@/lib/services/notification-briefs";
 
 export const dailyBrief = schedules.task({
   id: "daily-brief",
@@ -18,19 +18,21 @@ export const dailyBrief = schedules.task({
 
     for (const userId of userIds) {
       try {
-        let briefContent = await aiCache.findCached(userId, "daily_brief", cacheKey);
+        let body = await aiCache.findCached(userId, "daily_brief", cacheKey);
 
-        if (!briefContent) {
-          const result = await generateJsonResponse<{ content: string }>(
-            "You are Syncra's AI notification assistant. Generate a concise daily brief notification. Format the response as a JSON object with a 'content' field. Keep it under 800 characters.",
-            { userId, date: cacheKey }
-          );
-          briefContent = result?.content || "No brief generated.";
+        if (!body) {
+          // Grounded: reads the canonical briefing pipeline (real synchronized
+          // items). Never a free-form LLM call — no fabricated content.
+          const brief = await buildGroundedBriefNotification(userId, {
+            title: "Daily AI Brief",
+            scope: "daily",
+          });
+          body = brief.body;
           await aiCache.upsert({
             user_id: userId,
             summary_type: "daily_brief",
             cache_key: cacheKey,
-            content: briefContent,
+            content: body,
             expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
           });
         }
@@ -39,7 +41,7 @@ export const dailyBrief = schedules.task({
           userId,
           notificationType: "daily_ai_brief",
           title: "Daily AI Brief",
-          body: briefContent,
+          body,
           provider: "telegram",
         });
       } catch (error) {

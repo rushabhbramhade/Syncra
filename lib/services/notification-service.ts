@@ -3,8 +3,6 @@ import { TelegramRepository } from "@/lib/repositories/telegram-repository";
 import { NotificationPreferencesRepository, NotificationType } from "@/lib/repositories/notification-preferences-repository";
 import { NotificationHistoryRepository } from "@/lib/repositories/notification-history-repository";
 import { NotificationCenterRepository } from "@/lib/repositories/notification-center-repository";
-import { AISummaryCacheRepository } from "@/lib/repositories/ai-summary-cache-repository";
-import { generateJsonResponse } from "@/lib/ai-service";
 import { notificationProviderRegistry } from "@/lib/notifications/provider-registry";
 import { notificationLogger } from "@/lib/notifications/logger";
 
@@ -24,7 +22,6 @@ function getRepos() {
     preferences: new NotificationPreferencesRepository(admin),
     history: new NotificationHistoryRepository(admin),
     center: new NotificationCenterRepository(admin),
-    aiCache: new AISummaryCacheRepository(admin),
   };
 }
 
@@ -118,76 +115,8 @@ export class NotificationService {
     });
   }
 
-  async sendDailyBrief(userId: string, userData?: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
-    const brief = await this.generateBrief(userId, "daily_ai_brief", "Today's AI Brief", userData);
-    if (brief.error) return { success: false, error: brief.error };
-    return this.send({
-      userId,
-      type: "daily_ai_brief",
-      title: "Daily AI Brief",
-      body: brief.content,
-      provider: "telegram",
-    });
-  }
-
-  async sendPrioritySummary(userId: string, userData?: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
-    const brief = await this.generateBrief(userId, "priority_items", "Priority Items", userData);
-    if (brief.error) return { success: false, error: brief.error };
-    return this.send({
-      userId,
-      type: "priority_items",
-      title: "Priority Items",
-      body: brief.content,
-      provider: "telegram",
-    });
-  }
-
   static sendTest(userId: string): Promise<{ success: boolean; error?: string }> {
     return getNotificationService().sendTest(userId);
-  }
-
-  static sendDailyBrief(userId: string, userData?: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
-    return getNotificationService().sendDailyBrief(userId, userData);
-  }
-
-  static sendPrioritySummary(userId: string, userData?: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
-    return getNotificationService().sendPrioritySummary(userId, userData);
-  }
-
-  private async generateBrief(
-    userId: string,
-    type: string,
-    title: string,
-    userData?: Record<string, unknown>
-  ): Promise<{ content: string; error?: string }> {
-    const summaryType = type === "daily_ai_brief" ? "daily_brief" as const : "priority_summary" as const;
-    const cacheKey = new Date().toISOString().split("T")[0];
-    const repos = getRepos();
-    const cached = await repos.aiCache.findCached(userId, summaryType, cacheKey);
-    if (cached) {
-      notificationLogger.info({ userId, type }, "Using cached AI summary");
-      return { content: cached };
-    }
-
-    const systemPrompt = `You are Syncra's AI notification assistant. Generate a concise ${title} notification for a Telegram message. Format the response as a JSON object with a "content" field containing the HTML-formatted message. Use bold for headings, bullet points for lists. Keep it under 800 characters. Current time: ${new Date().toISOString()}.`;
-
-    try {
-      const result = await generateJsonResponse<{ content: string }>(systemPrompt, userData);
-      if (!result) return { content: "", error: "AI generation returned null" };
-      
-      await repos.aiCache.upsert({
-        user_id: userId,
-        summary_type: summaryType,
-        cache_key: cacheKey,
-        content: result.content,
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
-
-      return { content: result.content };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "AI generation failed";
-      return { content: "", error: message };
-    }
   }
 }
 
@@ -211,12 +140,4 @@ export async function notify(
 
 export async function sendTest(userId: string): Promise<{ success: boolean; error?: string }> {
   return getNotificationService().sendTest(userId);
-}
-
-export async function sendDailyBrief(userId: string, userData?: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
-  return getNotificationService().sendDailyBrief(userId, userData);
-}
-
-export async function sendPrioritySummary(userId: string, userData?: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
-  return getNotificationService().sendPrioritySummary(userId, userData);
 }

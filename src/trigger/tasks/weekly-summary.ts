@@ -2,14 +2,7 @@ import { schedules } from "@trigger.dev/sdk/v3";
 import { sendNotification } from "./notification-send";
 import { createAdminDb } from "@/lib/db";
 import { NotificationPreferencesRepository } from "@/lib/repositories/notification-preferences-repository";
-import { generateJsonResponse } from "@/lib/ai-service";
-
-function getWeekNumber(): number {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), 0, 1);
-  const diff = now.getTime() - start.getTime();
-  return Math.ceil(diff / (7 * 24 * 60 * 60 * 1000));
-}
+import { buildGroundedBriefNotification } from "@/lib/services/notification-briefs";
 
 export const weeklySummary = schedules.task({
   id: "weekly-summary",
@@ -21,16 +14,18 @@ export const weeklySummary = schedules.task({
 
     for (const userId of userIds) {
       try {
-        const result = await generateJsonResponse<{ content: string }>(
-          "You are Syncra's AI notification assistant. Generate a weekly priority summary. Format as JSON with a 'content' field. Keep it under 1000 characters.",
-          { userId, week: getWeekNumber() }
-        );
+        // Grounded: reads the canonical briefing pipeline (real synchronized
+        // items). Never a free-form LLM call — no fabricated content.
+        const brief = await buildGroundedBriefNotification(userId, {
+          title: "Weekly Priority Summary",
+          scope: "weekly",
+        });
 
         await sendNotification.trigger({
           userId,
           notificationType: "priority_items",
-          title: "Weekly Priority Summary",
-          body: result?.content || "No summary available.",
+          title: brief.title,
+          body: brief.body,
           provider: "telegram",
         });
       } catch (error) {

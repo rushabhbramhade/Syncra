@@ -18,6 +18,7 @@ import {
   buildCoverageItems,
   filterGroundedItems,
   classifyProviderStatus,
+  effectiveActivityTimestamp,
   type ProviderHealth,
   type ProviderHealthReport,
 } from "@/lib/briefing/pipeline";
@@ -746,6 +747,13 @@ ${buildManifest(healthReport)}`;
 
       const briefingId = briefingRecord.id!;
 
+      // Map an AI/backfilled item to the real synchronized entity's timestamp
+      // by its sourceId (scoped to the item's own platform). Storing the true
+      // activity time (message sent / event start) instead of generation time
+      // keeps dashboard "time" labels grounded.
+      const entityTimestamp = (item: AIResponseBriefing["items"][number]): string =>
+        effectiveActivityTimestamp(item, contextEntities);
+
       // 6. Store briefing items with correlation data
       const storedItems = await Promise.all(
         (aiResult.items || []).map(async (item) => {
@@ -767,7 +775,7 @@ ${buildManifest(healthReport)}`;
             status: "unread",
             notes: null,
             snoozed_until: null,
-            timestamp: new Date().toISOString(),
+            timestamp: entityTimestamp(item),
           });
         })
       );

@@ -11,6 +11,8 @@ import {
   buildCoverageItems,
   filterGroundedItems,
   classifyProviderStatus,
+  effectiveActivityTimestamp,
+  composeBriefBody,
 } from "../lib/briefing/pipeline.ts";
 
 const INT = "integration-test-id";
@@ -244,4 +246,43 @@ test("classifyProviderStatus: stage counts derive healthy/partial/no-activity", 
   assert.equal(classifyProviderStatus({ ...emptyHealth(true), fetched: 5, normalized: 5, aiUsed: 5 }).status, "healthy");
   assert.equal(classifyProviderStatus({ ...emptyHealth(true), fetched: 5, normalized: 0 }).status, "partial");
   assert.equal(classifyProviderStatus(emptyHealth(true)).status, "no_recent_activity");
+});
+
+test("effectiveActivityTimestamp: uses real entity time scoped to item's platform", () => {
+  const ctx: any = {
+    gmail: [{ providerId: "m1", sentAt: "2026-01-02T03:04:05Z" }],
+    whatsapp: [{ providerId: "m1", sentAt: "2026-03-04T05:06:07Z" }],
+  };
+  assert.equal(effectiveActivityTimestamp({ platform: "gmail", sourceId: "m1" }, ctx), "2026-01-02T03:04:05Z");
+  assert.equal(effectiveActivityTimestamp({ platform: "whatsapp", sourceId: "m1" }, ctx), "2026-03-04T05:06:07Z");
+});
+
+test("effectiveActivityTimestamp: falls back to sentAt, then startsAt, then now", () => {
+  const ctx: any = { calendar: [{ providerId: "c1", startsAt: "2026-05-06T07:08:09Z" }] };
+  assert.equal(effectiveActivityTimestamp({ platform: "calendar", sourceId: "c1" }, ctx), "2026-05-06T07:08:09Z");
+  assert.equal(effectiveActivityTimestamp({ platform: "calendar", sourceId: "missing" }, ctx).length > 0, true);
+  assert.equal(effectiveActivityTimestamp({ platform: "calendar", sourceId: "missing" }, ctx) !== undefined, true);
+});
+
+test("effectiveActivityTimestamp: no cross-platform leak when same id exists elsewhere", () => {
+  const ctx: any = { telegram: [{ providerId: "9", sentAt: "2026-02-02T00:00:00Z" }] };
+  const out = effectiveActivityTimestamp({ platform: "gmail", sourceId: "9" }, ctx);
+  assert.notEqual(out, "2026-02-02T00:00:00Z", "gmail must not see telegram's entity");
+});
+
+test("composeBriefBody: deterministic, real items only, high priority first", () => {
+  const items = [
+    { platform: "slack", category: "messages", priority: "low", timestamp: "2026-01-01T09:00:00Z", metadata: { title: "lunch" } },
+    { platform: "github", category: "tasks", priority: "high", timestamp: "2026-01-01T10:00:00Z", metadata: { title: "P0 outage" } },
+  ];
+  const body = composeBriefBody(items, { scope: "daily" });
+  const ghIdx = body.indexOf("P0 outage");
+  const slackIdx = body.indexOf("lunch");
+  assert.ok(ghIdx !== -1 && slackIdx !== -1, "both real items present");
+  assert.ok(ghIdx < slackIdx, "high-priority github item listed first");
+  assert.equal(body.includes("[github]"), true);
+});
+
+test("composeBriefBody: honest when no items, never fabricates", () => {
+  assert.equal(composeBriefBody([], { scope: "daily" }), "No recent workspace activity to report.");
 });

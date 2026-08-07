@@ -191,21 +191,3 @@ export async function getNotificationHistoryAction(userId: string, limit = 50) {
     return { success: false, error: "Failed to load notification history.", history: [], stats: { total: 0, sent: 0, failed: 0, delivered: 0 } };
   }
 }
-
-export async function generateAndSendBriefAction(
-  userId: string,
-  type: "daily_ai_brief" | "priority_items",
-  userData?: Record<string, unknown>
-) {
-  const guard = await requireOwnership(userId);
-  if ("error" in guard) return { success: false, error: guard.error };
-  try {
-    if (type === "daily_ai_brief") {
-      return await NotificationService.sendDailyBrief(guard.userId, userData);
-    }
-    return await NotificationService.sendPrioritySummary(guard.userId, userData);
-  } catch (error) {
-    console.error("generateAndSendBriefAction failed:", error);
-    return { success: false, error: "Failed to generate and send brief." };
-  }
-}

@@ -34,13 +34,17 @@ export async function getConnectionStatus(userId: string, providerId: string): P
   const guard = await requireOwnership(userId);
   if ("error" in guard) return null;
   try {
-    // WhatsApp is only "connected" once the whole integration is ready (auth,
-    // open socket, valid session, syncs complete) — a row with status 'active'
-    // can predate a fresh socket re-sync, so surface it as disconnected until then.
+    // WhatsApp: the integration row in user_integrations is the source of truth
+    // for "connected" — exactly like every other provider. A live socket is a
+    // delivery detail, not the connection state: a transient drop or a cold
+    // restart must NOT flip a linked account to "disconnected". Readiness (auth
+    // + open socket + completed sync) is still enforced downstream by
+    // getConnectionState when the briefing/tools need to fetch data. Only when
+    // there is no integration row at all (never connected / explicitly
+    // disconnected) do we report disconnected.
     if (providerId === "whatsapp") {
-      const { WhatsAppClientManager } = await import("@/lib/whatsapp/client");
-      const state = await WhatsAppClientManager.getConnectionState(userId);
-      if (!state.ready) return null;
+      const row = await getRepo().findByUserAndProvider(userId, "whatsapp");
+      if (!row) return null;
     }
     return await getRepo().getConnectionStatus(userId, providerId);
   } catch (e) {

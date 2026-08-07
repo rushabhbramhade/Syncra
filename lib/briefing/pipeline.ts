@@ -56,6 +56,27 @@ export function computeQuality(h: ProviderHealth): { score: number; label: strin
 }
 
 /** Count real items in a raw or normalized payload (arrays + nested objects). */
+/**
+ * Resolve the true activity time (message sent / event start) of a briefing item
+ * by looking up its sourceId within that item's own platform's entities — never
+ * across platforms, so same-id collisions between providers can't cross-match.
+ * Falls back to "now" when the source is untraceable.
+ */
+export function effectiveActivityTimestamp(
+  item: { platform?: string; sourceId?: string },
+  contextEntities: Record<string, Array<{ providerId?: unknown; sentAt?: string | null; startsAt?: string | null }>>,
+): string {
+  if (item.sourceId) {
+    const entities = item.platform ? contextEntities[item.platform] : undefined;
+    const match = (entities || []).find(
+      (e) => String(e.providerId) === String(item.sourceId),
+    );
+    const ts = match ? match.sentAt ?? match.startsAt : undefined;
+    if (ts) return ts;
+  }
+  return new Date().toISOString();
+}
+
 export function countItems(value: unknown): number {
   if (Array.isArray(value)) return value.length;
   if (value && typeof value === "object") {
@@ -514,4 +535,31 @@ export function buildCoverageItems(providerId: string, entities: NormalizedEntit
     });
   }
   return out;
+}
+
+const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, normal: 2, low: 3 };
+
+/**
+ * Build a Telegram-friendly brief body from REAL persisted briefing items only.
+ * Deterministic — never invokes the LLM, so nothing fabricated can slip in.
+ * High-priority items first; every line references an actual synchronized item.
+ */
+export function composeBriefBody(
+  items: Array<{ platform: string; priority: string; timestamp?: string; metadata?: { title?: unknown } | null }>,
+  opts: { scope: "daily" | "weekly"; limit?: number } = { scope: "daily" }
+): string {
+  const limit = opts.limit ?? (opts.scope === "daily" ? 5 : 8);
+  const lines: string[] = [];
+  const sorted = [...items].sort(
+    (a, b) => (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3)
+  );
+  for (const it of sorted.slice(0, limit)) {
+    const meta = (it.metadata ?? {}) as Record<string, unknown>;
+    const title = String(meta.title || "Untitled item");
+    const time = it.timestamp ? new Date(it.timestamp).toISOString().slice(11, 16) : "";
+    lines.push(`• <b>[${it.platform}]</b> ${title}${time ? ` (${time})` : ""}`);
+  }
+  if (lines.length === 0) return "No recent workspace activity to report.";
+  const header = opts.scope === "daily" ? "Here is what's happening today" : "Your weekly priority summary";
+  return `<b>${header}:</b>\n` + lines.join("\n");
 }

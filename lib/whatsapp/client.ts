@@ -4,7 +4,6 @@
 process.env.WS_NO_BUFFER_UTIL = "1";
 
 import makeWASocket, {
-  DisconnectReason,
   BufferJSON,
   initAuthCreds,
   fetchLatestWaWebVersion,
@@ -13,6 +12,7 @@ import pino from "pino";
 import path from "path";
 import fs from "fs";
 import { saveConnection, disconnectConnection } from "@/app/actions/integrations";
+import { decideWaCloseAction } from "@/lib/whatsapp/disconnect-policy";
 import { WhatsAppSessionsRepository } from "@/lib/repositories/whatsapp-sessions-repository";
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
 import { createAdminDb } from "@/lib/db";
@@ -313,24 +313,31 @@ function attachClientHandlers(sock: any, userId: string) {
         if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         const hasSession = await WhatsAppClientManager.isSessionSaved(userId);
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut && hasSession;
+        const action = decideWaCloseAction(statusCode, hasSession);
 
-        waTrace(userId, "client_close", { statusCode, hasSession, shouldReconnect });
+        waTrace(userId, "client_close", { statusCode, hasSession, action });
 
         activeSockets.delete(userId);
         socketOpen.delete(userId);
-        if (shouldReconnect) {
-          try { await disconnectConnection(userId, "whatsapp"); } catch {}
+
+        if (action === "teardown_session") {
+          // Phone revoked / logged out — the persisted session is truly dead.
+          // Tear down the integration row + session so the UI asks to reconnect.
+          try { await disconnectConnection(userId, "whatsapp"); } catch (e) {
+            console.error("Failed to delete connection on logout:", e);
+          }
+        } else if (action === "reconnect") {
+          // Transient close (network drop, restart, timeout). The persisted
+          // session + active integration row are KEPT — this is the durable
+          // source of truth. getConnectionState() therefore still reports
+          // ready for connected, so the integration never silently vanishes.
+          // Reopen the socket in the background to resume live delivery.
           setTimeout(() => {
             WhatsAppClientManager.getClient(userId).catch(err => console.error("Error reconnecting WhatsApp:", err));
           }, 3000);
-        } else {
-          try {
-            await disconnectConnection(userId, "whatsapp");
-          } catch (e) {
-            console.error("Failed to delete connection on logout:", e);
-          }
         }
+        // action === "ignore": no session creds yet (pre-pair). Never delete an
+        // existing active integration row just because a pairing socket closed.
       } else if (connection === "open") {
         // `open` on a RESTORED/verified socket = a usable session. It does NOT
         // fire on the pre-auth noise handshake of a pairing socket, so this is
@@ -466,9 +473,11 @@ function attachClientHandlers(sock: any, userId: string) {
     for (const c of contacts || []) recordContact(userId, c?.id);
   });
 
-  // Cache incoming messages
+  // Cache incoming messages. "notify" = live delivery, "append" = history
+  // sync / fetchMessagesFromSync. Both carry the same shape; cacheMessage
+  // dedupes by remoteJid:id so re-upserts are harmless.
   sock.ev.on("messages.upsert", async (m: any) => {
-    if (m.type === "notify") {
+    if (m.type === "notify" || m.type === "append") {
       for (const msg of m.messages) {
         if (!msg.message) continue;
 
