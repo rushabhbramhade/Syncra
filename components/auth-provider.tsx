@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
-import { syncUserToDatabase, signOutAction, getCurrentUserAction } from "@/app/actions";
+import { syncCurrentUserToDatabase, signOutAction, getCurrentUserAction } from "@/app/actions";
 
 export interface InsforgeUser {
   id: string;
@@ -90,7 +90,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         clearSession();
         setIsLoading(false);
         signOutAction().finally(() => {
-          window.location.href = "/sign-in";
+          // Reload the protected URL so the proxy remains the single routing authority.
+          window.location.reload();
         });
         return;
       }
@@ -112,14 +113,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (Date.now() - lastSyncRef.current >= 60000) {
           try {
-            const syncedUser = await syncUserToDatabase({
-              auth_user_id: verifiedUser.id,
-              email: verifiedUser.email,
-              full_name: verifiedUser.profile?.name || "New User",
-              avatar_url: verifiedUser.profile?.avatar_url || null,
-              auth_provider: verifiedUser.providers?.[0] || "email",
-              email_verified: verifiedUser.emailVerified || false,
-            });
+            const syncedUser = await syncCurrentUserToDatabase();
             if (isMounted.current) {
               setDbUser(syncedUser);
               lastSyncRef.current = Date.now();
@@ -129,6 +123,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
           } catch (err) {
             console.error("Failed to sync user record:", err);
+            if (isMounted.current) {
+              setDbUser(null);
+              setErrorMsg("We couldn't load your workspace profile. Check your connection and try again.");
+            }
           }
         }
       }

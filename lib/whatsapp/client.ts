@@ -11,7 +11,7 @@ import makeWASocket, {
 import pino from "pino";
 import path from "path";
 import fs from "fs";
-import { saveConnection, disconnectConnection } from "@/app/actions/integrations";
+import { saveConnection, disconnectConnection } from "@/lib/integrations/actions-core";
 import { decideWaCloseAction, decidePairingClose, decidePairingRenewal } from "@/lib/whatsapp/disconnect-policy";
 import { WhatsAppSessionsRepository } from "@/lib/repositories/whatsapp-sessions-repository";
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
@@ -320,7 +320,7 @@ function computeSyncStats(userId: string): Record<string, unknown> {
   };
 }
 
-// Shared sync-engine wiring: reconnect/close handling + incoming message
+// Shared socket wiring: reconnect/close handling + incoming message
 // caching. Applied to every socket (restored sessions and freshly-linked QR
 // sockets alike) so both paths get identical behaviour.
 function attachClientHandlers(sock: any, userId: string) {
@@ -1122,19 +1122,41 @@ export class WhatsAppClientManager {
     ]);
 
     const authOk = hasSession && !!integration && integration.status === "active";
-    const isSocketOpen = !!sock && socketOpen.has(userId);
-    const sessionValid = isSocketOpen && !!sock?.user?.id;
-    const initialSyncCompleted = initialSyncDone.has(userId);
-    const lastSyncOk = integration?.sync_status === "success";
+    let isSocketOpen = !!sock && socketOpen.has(userId);
+    let lastSyncOk = integration?.sync_status === "success";
 
     // Lazy restore: DB says connected but no socket in this process (restart).
     // Re-open it in the background, deduped against concurrent probes from the
-    // briefing, dashboard, maintenance and tools.
-    if (authOk && !isSocketOpen && !restoring.has(userId)) {
-      restoring.add(userId);
-      WhatsAppClientManager.getClient(userId)
-        .catch(err => console.error(`[wa-auth] lazy restore failed userId=${userId}`, err))
-        .finally(() => restoring.delete(userId));
+    // briefing, dashboard, maintenance and tools. Callers AWAIT the restore
+    // (bounded) so a briefing/tool call during a mid-restart window still gets
+    // the live socket instead of returning empty and silently dropping the
+    // provider from the run.
+    if (authOk && !isSocketOpen) {
+      if (!restoring.has(userId)) {
+        restoring.add(userId);
+        WhatsAppClientManager.getClient(userId)
+          .catch(err => console.error(`[wa-auth] lazy restore failed userId=${userId}`, err))
+          .finally(() => restoring.delete(userId));
+      }
+      // Bounded wait for the restore to open (covers the cold-start window
+      // before the open handler re-runs initial sync and flips sync_status).
+      for (let i = 0; i < 40; i++) {
+        if (socketOpen.has(userId)) { isSocketOpen = true; break; }
+        if (!restoring.has(userId) && !activeSockets.has(userId)) break;
+        await new Promise(r => setTimeout(r, 250));
+      }
+    }
+
+    const sessionValid = isSocketOpen && !!sock?.user?.id;
+    const initialSyncCompleted = initialSyncDone.has(userId);
+
+    // The open handler may have just re-run initial sync and flipped
+    // sync_status to success during the restore wait — recompute so the brief
+    // that follows a cold restart sees ready=true instead of a stale empty.
+    if (!lastSyncOk && isSocketOpen) {
+      const refetched = await new IntegrationsRepository(createAdminDb())
+        .findByUserAndProvider(userId, "whatsapp");
+      lastSyncOk = refetched?.sync_status === "success";
     }
 
     return {

@@ -27,7 +27,7 @@ export async function getAuthenticatedUser(): Promise<{ user: AuthUser } | { err
   }
 }
 
-export async function requireOwnership(userId: string): Promise<{ userId: string } | { error: string }> {
+export async function requireOwnership(userId: string): Promise<{ userId: string; authUserId: string } | { error: string }> {
   const result = await getAuthenticatedUser();
   if ("error" in result) return result;
 
@@ -48,5 +48,5 @@ export async function requireOwnership(userId: string): Promise<{ userId: string
     return { error: "Access denied" };
   }
 
-  return { userId: dbUserId };
+  return { userId: dbUserId, authUserId: result.user.id };
 }

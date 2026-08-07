@@ -3,7 +3,7 @@ import { BriefingsRepository } from "@/lib/repositories/briefings-repository";
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
 import { UsersRepository } from "@/lib/repositories/users-repository";
 import { getUnifiedStoreRepo } from "@/lib/repositories/unified-store-repository";
-import { executeMCPAction } from "@/app/actions/integrations";
+import { executeMCPAction } from "@/lib/integrations/actions-core";
 import { generateJsonResponse } from "@/lib/ai-service";
 import { publishEvent } from "@/lib/notifications/events";
 import { BRIEFING_CATEGORIES } from "@/lib/constants/briefing-categories";
@@ -194,7 +194,8 @@ export class BriefingService {
     return BriefingService.instance;
   }
 
-  async generateBriefingForSchedule(userId: string, scheduleId: string | null, triggerSource: "manual" | "schedule"): Promise<{ success: boolean; briefingId?: string; empty?: boolean; error?: string }> {
+  async generateBriefingForSchedule(userId: string, scheduleId: string | null, triggerSource: "manual" | "schedule", opts?: { demoMode?: boolean }): Promise<{ success: boolean; briefingId?: string; empty?: boolean; error?: string; demo?: { ai_tokens_used?: number; elapsed_ms: number; items_count: number; platforms: string[] } }> {
+    const demoMode = opts?.demoMode ?? false;
     const startTime = Date.now();
     const correlationId = getCorrelationId() || `brief_${startTime.toString(36)}`;
     const log = logger.child({ correlationId, userId, scheduleId, triggerSource });
@@ -243,8 +244,9 @@ export class BriefingService {
       // manual trigger and the cron from generating the same schedule twice, and
       // makes every run auditable. Manual+schedule duplicates are impossible.
       // Shared only when a null scheduleId (ad-hoc run) is supplied.
+      // Demo mode skips lock + run creation (read-only verification).
       const workerId = String(process.pid ?? 0) + ":" + correlationId;
-      if (scheduleId) {
+      if (scheduleId && !demoMode) {
         const claimed = await repo.claimSchedule(scheduleId, workerId);
         if (!claimed) {
           log.warn("Schedule is locked by another worker; skipping to avoid duplicate generation", { scheduleId });
@@ -386,16 +388,7 @@ export class BriefingService {
         { provider: "linkedin", action: "linkedin_get_profile", params: {} },
       ];
 
-      await Promise.allSettled(
-        platformTasks
-          .filter(p => activeIntegrations.includes(p.provider) && (!p.categoryFilter || selectedCategories.includes(p.categoryFilter)))
-          .map(async (p) => {
-            const r = await executeMCPAction(authUserId, p.provider, p.action, p.params);
-            if (r.status === "success") fetchedProviders.push(p.provider);
-            await ingest(p.provider, r);
-          })
-      );
-
+      // Create githubPromise BEFORE awaiting platformTasks so all providers run in parallel.
       const githubPromise = activeIntegrations.includes("github")
         ? (async () => {
             const [issues, notifications] = await Promise.allSettled([
@@ -432,8 +425,17 @@ export class BriefingService {
             }
           })().catch(e => console.warn("GitHub MCP action failed in briefing sync:", e))
         : Promise.resolve();
-      // GitHub runs in parallel with all other platform calls
-      await githubPromise;
+
+      await Promise.allSettled([
+        ...platformTasks
+          .filter(p => activeIntegrations.includes(p.provider) && (!p.categoryFilter || selectedCategories.includes(p.categoryFilter)))
+          .map(async (p) => {
+            const r = await executeMCPAction(authUserId, p.provider, p.action, p.params);
+            if (r.status === "success") fetchedProviders.push(p.provider);
+            await ingest(p.provider, r);
+          }),
+        githubPromise,
+      ]);
 
       const perProviderCounts = Object.fromEntries(
         Object.entries(rawContext).map(([provider, value]) => [provider, countItems(value)])
@@ -741,6 +743,21 @@ ${buildManifest(healthReport)}`;
       }
 
       // 5. Store generated briefing (with FK fallback)
+      // Demo mode: skip all persistence, return result for verification.
+      if (demoMode) {
+        const platforms = [...renderedPlatforms];
+        return {
+          success: true,
+          empty: false,
+          demo: {
+            ai_tokens_used: 0, // generateJsonResponse doesn't expose token count
+            elapsed_ms: Date.now() - startTime,
+            items_count: (aiResult.items || []).length,
+            platforms,
+          },
+        };
+      }
+
       const createBriefingPayload = {
         user_id: userId,
         schedule_id: scheduleId,
@@ -876,6 +893,18 @@ ${buildManifest(healthReport)}`;
     } catch (error: any) {
       const errorMsg = error instanceof Error ? error.message : "Briefing generation failed";
       log.error("Briefing generation failed", { error: errorMsg, elapsedMs: Date.now() - startTime });
+
+      // Alert via notification system so failures are never silent.
+      try {
+        await publishEvent("briefing_generation_failed", userId, {
+          scheduleId,
+          triggerSource,
+          error: errorMsg,
+          duration_ms: Date.now() - startTime,
+        });
+      } catch (eventErr) {
+        log.warn("Failed to publish briefing failure event", { err: eventErr instanceof Error ? eventErr.message : eventErr });
+      }
 
       if (runId) {
         await repo.failRun(runId, errorMsg, Date.now() - startTime);

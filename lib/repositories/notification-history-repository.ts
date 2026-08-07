@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 export interface NotificationHistoryRecord {
   id?: string;
   user_id: string;
@@ -19,7 +20,21 @@ export interface NotificationHistoryRecord {
 }
 
 export class NotificationHistoryRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
+
+  async findById(id: string): Promise<NotificationHistoryRecord | null> {
+    const { data, error } = await this.db.database
+      .from("notification_history")
+      .select("*")
+      .eq("id", id)
+      .single();
+    if (error || !data) return null;
+    return data as NotificationHistoryRecord;
+  }
 
   async findByUserId(userId: string, limit = 50): Promise<NotificationHistoryRecord[]> {
     const { data, error } = await this.db.database

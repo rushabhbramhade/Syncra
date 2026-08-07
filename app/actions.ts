@@ -2,77 +2,37 @@
 
 import { createAuthActions, createServerClient } from "@insforge/sdk/ssr";
 import { cookies } from "next/headers";
-import { UsersRepository } from "@/lib/repositories/users-repository";
-import { createAdminDb } from "@/lib/db";
-
-async function retry<T>(fn: () => Promise<T>, retries = 3, delay = 500): Promise<T> {
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (i === retries - 1) throw err;
-      console.warn(`syncUserToDatabase attempt ${i + 1} failed, retrying...`, err);
-      await new Promise((r) => setTimeout(r, delay * (i + 1)));
-    }
-  }
-  throw new Error("retry exhausted");
-}
-
-export async function syncUserToDatabase(userData: {
-  auth_user_id: string;
-  email: string;
-  full_name: string;
-  avatar_url?: string | null;
-  auth_provider: string;
-  email_verified: boolean;
-}) {
-  const now = new Date().toISOString();
-  const admin = createAdminDb();
-  const repo = new UsersRepository(admin);
-
-  const userRecord = await retry(async () => {
-    const existingUser = await repo.findByAuthId(userData.auth_user_id);
-
-    if (!existingUser) {
-      const userByEmail = await repo.findByEmail(userData.email);
-
-      if (userByEmail) {
-        return repo.updateByEmail(userData.email, {
-          auth_user_id: userData.auth_user_id,
-          last_login_at: now,
-          email_verified: userData.email_verified,
-          full_name: userData.full_name === "New User" ? (userByEmail.full_name || "New User") : (userData.full_name || userByEmail.full_name || "New User"),
-          avatar_url: userData.avatar_url || userByEmail.avatar_url,
-        });
-      }
-
-      return repo.upsertByAuthId({
-        auth_user_id: userData.auth_user_id,
-        email: userData.email,
-        full_name: userData.full_name,
-        avatar_url: userData.avatar_url || null,
-        auth_provider: userData.auth_provider,
-        email_verified: userData.email_verified,
-        last_login_at: now,
-      });
-    }
-
-    return repo.updateByAuthId(userData.auth_user_id, {
-      last_login_at: now,
-      email_verified: userData.email_verified,
-      full_name: userData.full_name === "New User" ? (existingUser.full_name || "New User") : (userData.full_name || existingUser.full_name || "New User"),
-      avatar_url: userData.avatar_url || existingUser.avatar_url,
-    });
-  });
-
-  return userRecord;
-}
+import { syncUserToDatabase as syncUserToDatabaseCore } from "@/lib/auth/user-sync";
 
 const AUTH_CONFIG = {
   baseUrl: process.env.NEXT_PUBLIC_INSFORGE_BASE_URL,
   anonKey: process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY,
   timeout: 10000,
 };
+
+export async function syncCurrentUserToDatabase() {
+  const cookieStore = await cookies();
+  const client = createServerClient({ ...AUTH_CONFIG, cookies: cookieStore });
+  const { data: session, error } = await client.auth.getCurrentUser();
+
+  if (error || !session?.user) {
+    throw new Error("Not authenticated");
+  }
+
+  const user = session.user;
+  if (!user.email) {
+    throw new Error("Authenticated user has no email address");
+  }
+
+  return syncUserToDatabaseCore({
+    auth_user_id: user.id,
+    email: user.email,
+    full_name: (user.profile as { name?: string } | null)?.name || "New User",
+    avatar_url: (user.profile as { avatar_url?: string } | null)?.avatar_url || null,
+    auth_provider: user.providers?.[0] || "email",
+    email_verified: user.emailVerified || false,
+  });
+}
 
 export async function signInAction(email: string, password: string) {
   const auth = createAuthActions({

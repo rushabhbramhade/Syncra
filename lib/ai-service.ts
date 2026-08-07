@@ -113,7 +113,7 @@ export interface StreamChunk {
 
 export async function* generateStreamingCompletion(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-  tools?: any[],
+  tools?: OpenAI.Chat.Completions.ChatCompletionTool[],
   modelOverride?: string
 ): AsyncGenerator<StreamChunk> {
   const client = createClient();

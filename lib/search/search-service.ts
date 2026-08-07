@@ -1,6 +1,7 @@
 "use server";
 
-import { executeMCPAction } from "@/app/actions/integrations";
+import { executeMCPAction } from "@/lib/integrations/actions-core";
+import { requireOwnership } from "@/lib/auth-guard";
 
 export interface SearchResult {
   id: string;
@@ -12,7 +13,16 @@ export interface SearchResult {
   score: number;
 }
 
+type RawItem = Record<string, unknown>;
+
+function s(v: unknown): string {
+  return typeof v === "string" ? v : v != null ? String(v) : "";
+}
+
 export async function unifiedSearchAction(userId: string, query: string, platforms?: string[]): Promise<SearchResult[]> {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) throw new Error("Unauthorized");
+
   const allPlatforms = platforms || ["gmail", "whatsapp", "github"];
   const results: SearchResult[] = [];
 
@@ -20,15 +30,15 @@ export async function unifiedSearchAction(userId: string, query: string, platfor
     try {
       switch (platform) {
         case "gmail": {
-          const res = await executeMCPAction(userId, "gmail", "gmail_search_emails", { query, limit: 10 });
+          const res = await executeMCPAction(guard.authUserId, "gmail", "gmail_search_emails", { query, limit: 10 });
           if (res.status === "success" && Array.isArray(res.result)) {
-            for (const item of res.result as any[]) {
+            for (const item of res.result as RawItem[]) {
               results.push({
                 id: `gmail_${item.id}`,
                 platform: "gmail",
-                title: item.subject || "(No subject)",
-                snippet: item.snippet || "",
-                date: item.date,
+                title: s(item.subject) || "(No subject)",
+                snippet: s(item.snippet),
+                date: s(item.date) || undefined,
                 score: 1,
               });
             }
@@ -36,15 +46,15 @@ export async function unifiedSearchAction(userId: string, query: string, platfor
           break;
         }
         case "whatsapp": {
-          const res = await executeMCPAction(userId, "whatsapp", "whatsapp_search_chats", { query });
+          const res = await executeMCPAction(guard.authUserId, "whatsapp", "whatsapp_search_chats", { query });
           if (res.status === "success" && Array.isArray(res.result)) {
-            for (const item of res.result as any[]) {
+            for (const item of res.result as RawItem[]) {
               results.push({
                 id: `whatsapp_${item.id}`,
                 platform: "whatsapp",
-                title: item.fromName || "Unknown",
-                snippet: item.message || "",
-                date: item.timestamp,
+                title: s(item.fromName) || "Unknown",
+                snippet: s(item.message),
+                date: s(item.timestamp) || undefined,
                 score: 1,
               });
             }
@@ -52,15 +62,15 @@ export async function unifiedSearchAction(userId: string, query: string, platfor
           break;
         }
         case "github": {
-          const res = await executeMCPAction(userId, "github", "github_search_issues", { query });
+          const res = await executeMCPAction(guard.authUserId, "github", "github_search_issues", { query });
           if (res.status === "success" && Array.isArray(res.result)) {
-            for (const item of res.result as any[]) {
+            for (const item of res.result as RawItem[]) {
               results.push({
                 id: `github_${item.id}`,
                 platform: "github",
-                title: item.title || `Issue #${item.number}`,
-                snippet: item.body?.slice(0, 200) || "",
-                date: item.created_at,
+                title: s(item.title) || `Issue #${item.number}`,
+                snippet: s(item.body).slice(0, 200),
+                date: s(item.created_at) || undefined,
                 score: 1,
               });
             }
@@ -68,7 +78,7 @@ export async function unifiedSearchAction(userId: string, query: string, platfor
           break;
         }
       }
-    } catch {}
+    } catch (err) { console.error("[search]", platform, err); }
   });
 
   await Promise.allSettled(searches);

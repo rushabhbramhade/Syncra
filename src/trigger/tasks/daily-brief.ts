@@ -3,6 +3,7 @@ import { sendNotification } from "./notification-send";
 import { createAdminDb } from "@/lib/db";
 import { NotificationPreferencesRepository } from "@/lib/repositories/notification-preferences-repository";
 import { AISummaryCacheRepository } from "@/lib/repositories/ai-summary-cache-repository";
+import { TelegramRepository } from "@/lib/repositories/telegram-repository";
 import { buildGroundedBriefNotification } from "@/lib/services/notification-briefs";
 
 export const dailyBrief = schedules.task({
@@ -12,6 +13,7 @@ export const dailyBrief = schedules.task({
     const admin = createAdminDb();
     const prefs = new NotificationPreferencesRepository(admin);
     const aiCache = new AISummaryCacheRepository(admin);
+    const telegramRepo = new TelegramRepository(admin);
 
     const userIds = await prefs.findUsersWithEnabledType("daily_ai_brief");
     const cacheKey = new Date().toISOString().split("T")[0];
@@ -35,6 +37,14 @@ export const dailyBrief = schedules.task({
             content: body,
             expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
           });
+        }
+
+        // Only send if the user has an active Telegram connection; skip otherwise
+        // to avoid sending to a hardcoded provider the user may not have connected.
+        const telegramConn = await telegramRepo.getActive(userId);
+        if (!telegramConn) {
+          console.warn(`dailyBrief: user ${userId} has no active Telegram connection; skipping send.`);
+          continue;
         }
 
         await sendNotification.trigger({

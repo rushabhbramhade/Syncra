@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 export interface TelegramConnection {
   id?: string;
   user_id: string;
@@ -13,7 +14,11 @@ export interface TelegramConnection {
 }
 
 export class TelegramRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   async findByUserId(userId: string): Promise<TelegramConnection | null> {
     const { data, error } = await this.db.database

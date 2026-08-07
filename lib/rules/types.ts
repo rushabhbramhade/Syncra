@@ -7,12 +7,12 @@ export type ActionType = "setPriority" | "adjustScore" | "addTag" | "setCategory
 export interface RuleCondition {
   field: string;
   operator: ConditionOperator;
-  value: any;
+  value: unknown;
 }
 
 export interface RuleAction {
   type: ActionType;
-  value: any;
+  value: unknown;
 }
 
 export interface Rule {

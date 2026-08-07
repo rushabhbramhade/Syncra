@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 export type NotificationType =
   | "daily_ai_brief"
   | "priority_items"
@@ -54,7 +55,11 @@ export const NOTIFICATION_SCHEDULES: { value: NotificationSchedule; label: strin
 ];
 
 export class NotificationPreferencesRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   async findByUserId(userId: string): Promise<NotificationPreference[]> {
     const { data, error } = await this.db.database

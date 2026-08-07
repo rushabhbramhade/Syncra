@@ -22,7 +22,7 @@ export class IntegrationScopesRepository {
       .eq("user_id", userId)
       .eq("provider", "slack")
       .eq("scope_type", "channel");
-    return (data || []).map((r: any) => r.scope_value);
+    return (data || []).map((r: Record<string, unknown>) => String(r.scope_value));
   }
 
   async setGitHubRepos(userId: string, repos: string[]): Promise<void> {
@@ -44,6 +44,6 @@ export class IntegrationScopesRepository {
       .eq("user_id", userId)
       .eq("provider", "github")
       .eq("scope_type", "repo");
-    return (data || []).map((r: any) => r.scope_value);
+    return (data || []).map((r: Record<string, unknown>) => String(r.scope_value));
   }
 }

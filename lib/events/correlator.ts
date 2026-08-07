@@ -52,6 +52,11 @@ function findCorrelation(a: NormalizedEvent, b: NormalizedEvent): "meeting-email
       return "meeting-email";
     }
   }
+  if (b.platform === "calendar" && a.category === "email") {
+    if (normalizeText(b.title).includes(normalizeText(a.title.substring(0, 30)))) {
+      return "meeting-email";
+    }
+  }
 
   if ((a.platform === "github" || b.platform === "github") && (a.platform === "slack" || b.platform === "slack")) {
     const gh = a.platform === "github" ? a : b;

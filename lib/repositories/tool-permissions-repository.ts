@@ -88,7 +88,7 @@ export class ToolPermissionsRepository {
   async isWriteConfirmed(userId: string, toolName: string): Promise<boolean> {
     const perm = await this.get(userId, toolName);
     if (perm === null) return false;
-    return (perm as any).write_confirmed === true;
+    return Boolean(perm.write_confirmed);
   }
 
   async setWriteConfirmed(userId: string, toolName: string, provider?: string): Promise<void> {

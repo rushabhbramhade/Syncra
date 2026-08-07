@@ -74,10 +74,12 @@ export default function NotificationsPage() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [stats, setStats] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user || !activeUserId) return;
     setLoading(true);
+    setDataError(null);
     try {
       const { getNotificationsAction, getUnreadCountAction, getNotificationStatsAction } = await import("@/app/actions/notification-center");
       
@@ -97,7 +99,9 @@ export default function NotificationsPage() {
       if (notifRes.success) setNotifications((notifRes.notifications || []) as any[]);
       if (countRes.success) setUnreadCount(countRes.count);
       if (statsRes.success) setStats(statsRes.stats);
-    } catch {
+    } catch (err) {
+      console.error("Failed to load notifications:", err);
+      setDataError("Failed to load notifications. Please refresh.");
     } finally {
       setLoading(false);
     }
@@ -109,32 +113,44 @@ export default function NotificationsPage() {
 
   const handleMarkRead = async (ids: string[]) => {
     if (!user || !activeUserId) return;
+    const snapshot = notifications;
     try {
       const { markAsReadAction } = await import("@/app/actions/notification-center");
       await markAsReadAction(activeUserId, ids);
       setNotifications((prev) => prev.map((n) => ids.includes(n.id) ? { ...n, status: "read", read_at: new Date().toISOString() } : n));
       setSelectedIds(new Set());
-    } catch {}
+    } catch (err) {
+      console.error("Failed to mark notifications as read:", err);
+      setNotifications(snapshot);
+    }
   };
 
   const handleArchive = async (ids: string[]) => {
     if (!user || !activeUserId) return;
+    const snapshot = notifications;
     try {
       const { markAsArchivedAction } = await import("@/app/actions/notification-center");
       await markAsArchivedAction(activeUserId, ids);
       setNotifications((prev) => prev.filter((n) => !ids.includes(n.id)));
       setSelectedIds(new Set());
-    } catch {}
+    } catch (err) {
+      console.error("Failed to archive notifications:", err);
+      setNotifications(snapshot);
+    }
   };
 
   const handleDelete = async (ids: string[]) => {
     if (!user || !activeUserId) return;
+    const snapshot = notifications;
     try {
       const { deleteNotificationsAction } = await import("@/app/actions/notification-center");
       await deleteNotificationsAction(activeUserId, ids);
       setNotifications((prev) => prev.filter((n) => !ids.includes(n.id)));
       setSelectedIds(new Set());
-    } catch {}
+    } catch (err) {
+      console.error("Failed to delete notifications:", err);
+      setNotifications(snapshot);
+    }
   };
 
   const toggleSelect = (id: string) => {
@@ -156,6 +172,11 @@ export default function NotificationsPage() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+      {dataError && (
+        <div className="p-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-[13px] font-medium">
+          {dataError}
+        </div>
+      )}
       <div>
         <h1 className="text-[22px] font-bold text-slate-900 dark:text-slate-100 tracking-tight">
           Notification Center

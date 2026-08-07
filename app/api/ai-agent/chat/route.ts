@@ -5,7 +5,7 @@ import { UsersRepository } from "@/lib/repositories/users-repository";
 import { AIChatRepository } from "@/lib/repositories/ai-chat-repository";
 import { generateStreamingCompletion } from "@/lib/ai-service";
 import { PLATFORM_MCP_TOOLS } from "@/constants/mcp-tools";
-import { executeMCPAction } from "@/app/actions/integrations";
+import { executeMCPAction } from "@/lib/integrations/actions-core";
 import { checkRateLimit, getRateLimitHeaders } from "@/lib/rate-limiter";
 
 // Allow long execution time for route (for recursive agent runs)
@@ -22,19 +22,24 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Capture the auth UUID immediately so closures can use it without TS narrowing issues.
+    const authUserId = userData.user.id;
+
     const db = createAdminDb();
     const usersRepo = new UsersRepository(db);
-    const userRecord = await usersRepo.findByAuthId(userData.user.id);
+    const userRecord = await usersRepo.findByAuthId(authUserId);
     if (!userRecord) {
       return new Response(JSON.stringify({ error: "User not found in public database" }), {
         status: 404,
         headers: { "Content-Type": "application/json" },
       });
     }
+    // userId is the DB primary key (users.id); authUserId is the InsForge auth UUID.
+    // user_integrations rows use authUserId; conversations/messages use userId.
     const userId = userRecord.id;
 
-    // 2a. Rate limit check
-    const rateLimitCheck = await checkRateLimit(userData.user.id, "ai-agent", "free");
+    // 2a. Rate limit check (keyed on auth UUID — prevents cross-account collisions)
+    const rateLimitCheck = await checkRateLimit(authUserId, "ai-agent", "free");
     if (!rateLimitCheck.allowed) {
       return new Response(JSON.stringify({
         error: "Rate limit exceeded. Please wait before sending another message.",
@@ -105,7 +110,7 @@ export async function POST(req: NextRequest) {
     const { data: integrations } = await db.database
       .from("user_integrations")
       .select("provider, status")
-      .eq("user_id", userId)
+      .eq("user_id", authUserId)
       .eq("status", "active");
 
     const activeProviders = new Set((integrations || []).map((i: any) => i.provider));
@@ -132,8 +137,12 @@ export async function POST(req: NextRequest) {
 
     // 6. Define tool dispatcher
     async function dispatchToolCall(toolName: string, args: any) {
+      const KNOWN_PROVIDER_IDS = new Set(["gmail", "slack", "discord", "telegram", "whatsapp", "github", "linkedin", "calendar", "notion", "linear", "outlook"]);
       const providerId = toolName.split("_")[0];
-      const result = await executeMCPAction(userId, providerId, toolName, args);
+      if (!KNOWN_PROVIDER_IDS.has(providerId)) {
+        return { success: false, error: `Unknown tool provider: ${toolName}` };
+      }
+      const result = await executeMCPAction(authUserId, providerId, toolName, args);
 
       if (result.status === "success") {
         return { success: true, output: JSON.stringify(result.result) };
@@ -144,20 +153,36 @@ export async function POST(req: NextRequest) {
 
     // 7. Setup the agent loop
     async function* runAgentLoop() {
-      const history = await repo.getMessagesByConversationId(conversation.id);
-      
+      const history = (await repo.getMessagesByConversationId(conversation.id)).slice(-50);
+      const memoryItems = await repo.getMemoryByUserId(userId);
+
       const openAiMessages: any[] = [];
-      openAiMessages.push({
-        role: "system",
-        content: `You are Syncra's Workspace AI Agent, a helpful, advanced coding and execution assistant.
+      let systemPrompt = `You are Syncra's Workspace AI Agent, a helpful, advanced coding and execution assistant.
 You can execute actions on behalf of the user using the provided tools.
 You are running in a professional workspace.
-Be concise, clear, and direct. When you use tools, explain briefly what you are doing.`
+Be concise, clear, and direct. When you use tools, explain briefly what you are doing.`;
+      if (memoryItems.length > 0) {
+        systemPrompt += "\n\n<workspace_memory>\n" + memoryItems.map(m => `- ${m.key}: ${m.value}`).join("\n") + "\n</workspace_memory>";
+      }
+      openAiMessages.push({
+        role: "system",
+        content: systemPrompt,
       });
 
       for (const msg of history) {
+        if (msg.role === "tool") continue;
         if (msg.role === "user") {
           openAiMessages.push({ role: "user", content: msg.content });
+          // Inject file content for user messages (BUG C)
+          const files = await repo.getFilesByMessageId(msg.id);
+          for (const file of files) {
+            if (file.content) {
+              openAiMessages.push({
+                role: "user",
+                content: `[File: ${file.name}]\n${file.content}`,
+              });
+            }
+          }
         } else if (msg.role === "assistant") {
           const msgToolCalls = await repo.getToolCallsByMessageId(msg.id);
           if (msgToolCalls && msgToolCalls.length > 0) {
@@ -184,20 +209,13 @@ Be concise, clear, and direct. When you use tools, explain briefly what you are 
           } else {
             openAiMessages.push({ role: "assistant", content: msg.content });
           }
-        } else if (msg.role === "tool") {
-          const metadata = (msg.metadata || {}) as Record<string, any>;
-          openAiMessages.push({
-            role: "tool",
-            tool_call_id: metadata.tool_call_id || "unknown",
-            content: msg.content,
-          });
         }
       }
 
       const MAX_ITERATIONS = 5;
       let iteration = 0;
       let continueLoop = true;
-      let currentMessages = [...openAiMessages];
+      const currentMessages = [...openAiMessages];
 
       // Yield initial conversation info to the client
       yield { type: "info", conversationId: conversation.id };

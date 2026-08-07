@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NotificationHistoryRepository } from "../lib/repositories/notification-history-repository.ts";
+import type { AdminDb } from "../lib/repositories/types.ts";
 
 interface Row {
   id: string;
@@ -11,7 +12,7 @@ type FakeDb = { database: unknown };
 
 /** Cast any object to the repository's abstract db shape without `any` leaks. */
 function asRepoDb(db: FakeDb) {
-  return db as unknown as { database: { from(table: string): unknown } };
+  return db as unknown as AdminDb;
 }
 
 /** Minimal scriptable DB mirroring the postgrest `.update().eq().in().select()` chain. */

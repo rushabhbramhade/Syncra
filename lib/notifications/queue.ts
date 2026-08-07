@@ -1,6 +1,7 @@
 import { createAdminClient } from "@insforge/sdk";
 import { notificationProviderRegistry } from "./provider-registry";
 import { notificationLogger } from "./logger";
+import { NotificationType } from "@/lib/repositories/notification-preferences-repository";
 
 function createAdminDb() {
   const baseUrl = process.env.NEXT_PUBLIC_INSFORGE_BASE_URL;
@@ -191,7 +192,7 @@ export class NotificationQueue {
       const history = new NotificationHistoryRepository(admin);
       const prefs = new prefsRepoModule.NotificationPreferencesRepository(admin);
 
-      const pref = await prefs.findByType(notification.userId, notification.type as any);
+      const pref = await prefs.findByType(notification.userId, notification.type as NotificationType);
       if (pref && !pref.enabled) {
         return { success: false, error: "Notification type disabled by user" };
       }
@@ -227,8 +228,7 @@ export class NotificationQueue {
     const telegram = new TelegramRepository(admin);
 
     try {
-      const records = await history.findByUserId("", 1);
-      const record = records.find((r) => r.id === id) as QueuedNotification | undefined;
+      const record = await history.findById(id) as QueuedNotification | null;
       if (!record) return { success: false, error: "Record not found" };
 
       if (record.status !== "queued" && record.status !== "retrying") {
@@ -276,13 +276,20 @@ export class NotificationQueue {
     const due = await history.findDueForProcessing();
     notificationLogger.info({ count: due.length }, "Processing due notifications");
     
+    const ids = due.filter((r) => r.id).map((r) => r.id as string);
+    const CONCURRENCY = 5;
     let processed = 0;
-    for (const record of due) {
-      if (record.id) {
-        await this.process(record.id);
-        processed++;
+
+    for (let i = 0; i < ids.length; i += CONCURRENCY) {
+      const batch = ids.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(batch.map((id) => this.process(id)));
+      for (const result of results) {
+        if (result.status === "fulfilled" && result.value.success) {
+          processed++;
+        }
       }
     }
+
     return processed;
   }
 

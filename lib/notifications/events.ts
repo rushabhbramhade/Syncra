@@ -8,6 +8,7 @@ export interface NotificationEvent {
 export type NotificationEventType =
   | "daily_brief_generated"
   | "briefing_generated"
+  | "briefing_generation_failed"
   | "priority_items_generated"
   | "important_email_detected"
   | "meeting_reminder"

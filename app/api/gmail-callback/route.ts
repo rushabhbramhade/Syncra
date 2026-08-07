@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { IntegrationRegistry } from "@/lib/integrations";
-import { saveConnection } from "@/app/actions/integrations";
+import { saveConnection } from "@/lib/integrations/actions-core";
 import { verifyState } from "@/lib/oauth-state";
 import { getRedirectUri } from "@/lib/oauth";
 

@@ -9,7 +9,7 @@ interface RateLimitState {
   resetAt: number;
 }
 
-let searchRateLimit: RateLimitState = { remaining: 30, resetAt: 0 };
+const searchRateLimit: RateLimitState = { remaining: 30, resetAt: 0 };
 
 function apiHeaders(token: string): Record<string, string> {
   return {

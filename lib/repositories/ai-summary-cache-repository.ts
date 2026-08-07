@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 export interface AISummaryCacheRecord {
   id?: string;
   user_id: string;
@@ -9,7 +10,11 @@ export interface AISummaryCacheRecord {
 }
 
 export class AISummaryCacheRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   async findCached(userId: string, summaryType: "daily_brief" | "priority_summary", cacheKey: string): Promise<string | null> {
     const { data, error } = await this.db.database

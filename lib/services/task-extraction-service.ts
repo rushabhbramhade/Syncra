@@ -48,7 +48,7 @@ export async function saveTasks(userId: string, tasks: ExtractedTask[]): Promise
   }
 }
 
-export async function getTasks(userId: string): Promise<any[]> {
+export async function getTasks(userId: string): Promise<ExtractedTask[]> {
   const db = createAdminDb();
   const { data } = await db.database
     .from("user_tasks")

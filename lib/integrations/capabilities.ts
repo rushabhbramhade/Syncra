@@ -14,7 +14,11 @@ import { CAPABILITY_CATALOG, CapabilityId, ProviderId, isCapabilityId } from "./
 export type ProviderGetter = (providerId: ProviderId) => unknown;
 
 export class CapabilityRegistry {
-  constructor(private readonly getProvider: ProviderGetter) {}
+  private readonly getProvider: ProviderGetter;
+
+  constructor(getProvider: ProviderGetter) {
+    this.getProvider = getProvider;
+  }
 
   /** All capability ids a provider declares in the catalog. */
   capabilitiesFor(providerId: ProviderId): CapabilityId[] {

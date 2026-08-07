@@ -137,11 +137,17 @@ function isoOrNow(value: unknown): string {
 
 // ─── Per-provider normalizers → UnifiedEntity[] ─────────────────────────────
 
+/** Loose record shape for untrusted provider payloads. Field access is
+ *  intentional (provider schemas differ); the fields the normalizers read are
+ *  all optional so a malformed payload degrades to "no data" not a crash. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- untrusted provider payloads; typed field reads would be endless casting
+type Raw = Record<string, any>;
+
 function normalizeMessages(
   providerId: string,
   integrationId: string,
   raw: unknown,
-  map: (item: any) => Omit<UnifiedMessage, "entityKind" | "integrationId"> | null
+  map: (item: Raw) => Omit<UnifiedMessage, "entityKind" | "integrationId"> | null
 ): NormalizedEntity[] {
   if (!Array.isArray(raw)) return [];
   const out: NormalizedEntity[] = [];
@@ -162,7 +168,9 @@ function normalizeGmail(integrationId: string, raw: unknown): NormalizedEntity[]
       channelId: e.threadId ? `gmail:${e.threadId}` : null,
       bodyText: snippet,
       contentHash: hash("gmail", String(e.id), subject, snippet),
-      sentAt: new Date().toISOString(),
+      sentAt: e.rawDate
+        ? (() => { try { const d = new Date(String(e.rawDate)); return !isNaN(d.getTime()) ? d.toISOString() : new Date().toISOString(); } catch { return new Date().toISOString(); } })()
+        : new Date().toISOString(),
       direction: "inbound",
       metadata: { subject, from: e.from, to: e.to, unread: e.unread !== false },
     };
@@ -223,7 +231,7 @@ function normalizeDiscord(integrationId: string, raw: unknown): NormalizedEntity
     if (!content && !d.embeds) return null;
     const embeds = Array.isArray(d.embeds) ? d.embeds : [];
     const embedText = embeds
-      .map((em: any) => [em.title, em.description].filter(Boolean).join(" — "))
+      .map((em: Raw) => [em.title, em.description].filter(Boolean).join(" — "))
       .filter(Boolean)
       .join("\n");
     const bodyText = [content, embedText].filter(Boolean).join("\n");
@@ -263,48 +271,48 @@ function normalizeWhatsApp(integrationId: string, raw: unknown): NormalizedEntit
 }
 
 function normalizeGitHub(integrationId: string, raw: unknown): NormalizedEntity[] {
-  const r = (raw as Record<string, unknown>) || {};
+  // Handle both { issues, notifications } shape (briefing service) and flat array (single-action sync).
+  const isArray = Array.isArray(raw);
+  const r = isArray ? {} : ((raw as Record<string, unknown>) || {});
+  const issues: Raw[] = isArray ? [] : (Array.isArray(r.issues) ? r.issues as Raw[] : []);
+  const notifications: Raw[] = isArray ? raw as Raw[] : (Array.isArray(r.notifications) ? r.notifications as Raw[] : []);
   const out: NormalizedEntity[] = [];
-  if (Array.isArray(r.issues)) {
-    for (const i of r.issues as any[]) {
-      out.push({
-        entityKind: "task",
-        integrationId,
-        providerId: String(i.id),
-        providerTaskId: String(i.number),
-        kind: "issue",
-        title: `#${i.number} ${i.title}`,
-        status: i.state || "open",
-        repoId: null,
-        url: i.html_url || null,
-        metadata: {
-          repo: i.repository?.full_name || i.repository_url || null,
-          comments: i.comments ?? 0,
-          createdAt: i.created_at ?? null,
-        },
-      } satisfies UnifiedTask);
-    }
+  for (const i of issues) {
+    out.push({
+      entityKind: "task",
+      integrationId,
+      providerId: String(i.id),
+      providerTaskId: String(i.number),
+      kind: "issue",
+      title: `#${i.number} ${i.title}`,
+      status: i.state || "open",
+      repoId: null,
+      url: i.html_url || null,
+      metadata: {
+        repo: i.repository?.full_name || i.repository_url || null,
+        comments: i.comments ?? 0,
+        createdAt: i.created_at ?? null,
+      },
+    } satisfies UnifiedTask);
   }
-  if (Array.isArray(r.notifications)) {
-    for (const n of r.notifications as any[]) {
-      out.push({
-        entityKind: "notification",
-        integrationId,
-        providerId: String(n.id),
-        providerNotificationId: String(n.id),
-        kind: n.subject?.type || "notification",
-        title: n.subject?.title || "GitHub notification",
-        read: n.unread === false,
-        url: n.subject?.url || n.html_url || null,
-        metadata: { repo: n.repository?.full_name || null, reason: n.reason || null },
-      } satisfies UnifiedNotification);
-    }
+  for (const n of notifications) {
+    out.push({
+      entityKind: "notification",
+      integrationId,
+      providerId: String(n.id),
+      providerNotificationId: String(n.id),
+      kind: n.subject?.type || "notification",
+      title: n.subject?.title || "GitHub notification",
+      read: n.unread === false,
+      url: n.subject?.url || n.html_url || null,
+      metadata: { repo: n.repository?.full_name || null, reason: n.reason || null },
+    } satisfies UnifiedNotification);
   }
   return out;
 }
 
 function normalizeLinkedIn(integrationId: string, raw: unknown): NormalizedEntity[] {
-  const p = Array.isArray(raw) ? (raw as any[])[0] : raw;
+  const p = Array.isArray(raw) ? (raw as Raw[])[0] : raw;
   if (!p || typeof p !== "object") return [];
   const profile = p as Record<string, unknown>;
   if (!profile.sub && !profile.name && !profile.email) return [];
@@ -326,7 +334,7 @@ function normalizeLinkedIn(integrationId: string, raw: unknown): NormalizedEntit
 function normalizeCalendar(integrationId: string, raw: unknown): NormalizedEntity[] {
   if (!Array.isArray(raw)) return [];
   const out: NormalizedEntity[] = [];
-  for (const e of raw as any[]) {
+  for (const e of raw as Raw[]) {
     if (!e?.id) continue;
     out.push({
       entityKind: "event",
@@ -336,7 +344,9 @@ function normalizeCalendar(integrationId: string, raw: unknown): NormalizedEntit
       title: e.summary || "Calendar event",
       startsAt: e.start?.dateTime || e.start?.date || null,
       endsAt: e.end?.dateTime || e.end?.date || null,
-      attendees: Array.isArray(e.attendees) ? e.attendees.map((a: any) => a.email || a) : [],
+      attendees: Array.isArray(e.attendees)
+        ? (e.attendees as Raw[]).map((a: Raw) => a.email || a)
+        : [],
       metadata: { description: e.description || null, link: e.htmlLink || null },
     } satisfies UnifiedEvent);
   }

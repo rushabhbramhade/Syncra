@@ -33,7 +33,7 @@ export function createLogger(component?: string) {
   });
 }
 
-type LogFn = (msg: string, ...args: any[]) => void;
+type LogFn = (msg: string, ...args: unknown[]) => void;
 
 export interface Logger {
   info: LogFn;
@@ -47,10 +47,14 @@ const defaultLogger = createLogger();
 
 function wrapLogger(base: ReturnType<typeof createLogger>): Logger {
   return {
-    info: (msg, ...args) => base.info(msg, ...args),
-    warn: (msg, ...args) => base.warn(msg, ...args),
-    error: (msg, ...args) => base.error(msg, ...args),
-    debug: (msg, ...args) => base.debug(msg, ...args),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    info: (msg, ...args) => base.info(msg, ...(args as any[])),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    warn: (msg, ...args) => base.warn(msg, ...(args as any[])),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    error: (msg, ...args) => base.error(msg, ...(args as any[])),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    debug: (msg, ...args) => base.debug(msg, ...(args as any[])),
     child: (bindings) => wrapLogger(base.child(bindings)),
   };
 }

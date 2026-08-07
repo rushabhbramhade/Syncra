@@ -3,16 +3,16 @@
 import { createAdminDb } from "@/lib/db";
 import { requireOwnership } from "@/lib/auth-guard";
 
-interface ToolCallRecord {
-  tool_name: string;
+interface SyncLogRecord {
   status: string;
-  duration: number | null;
+  message: string | null;
+  duration_ms: number | null;
   created_at: string;
 }
 
 interface HealthActivity {
   lastSync: string | null;
-  recentActivity: ToolCallRecord[];
+  recentActivity: SyncLogRecord[];
   errorCount: number;
   totalCalls: number;
   successRate: number;
@@ -30,21 +30,29 @@ export async function getIntegrationHealthAction(userId: string, provider: strin
     .eq("provider", provider)
     .maybeSingle();
 
-  const { data: calls } = await db.database
-    .from("ai_tool_calls")
-    .select("tool_name, status, duration, created_at")
+  // Evidence source: integration_sync_logs carries every real sync/refresh
+  // outcome written by the sync path (success/error/refresh/reconnect), so the
+  // health card reflects actual synchronization evidence — never an empty
+  // ai_tool_calls (which only AI-chat writes and the sync path never touches).
+  const { data: logs, error: logsError } = await db.database
+    .from("integration_sync_logs")
+    .select("status, message, duration_ms, created_at")
     .eq("user_id", userId)
     .eq("provider", provider)
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const toolCalls = (calls || []) as ToolCallRecord[];
-  const totalCalls = toolCalls.length;
-  const errorCount = toolCalls.filter(c => c.status === "failed").length;
+  if (logsError) {
+    console.error("[IntegrationHealth] failed to read sync evidence:", logsError.message);
+  }
+
+  const syncLogs = (logs || []) as SyncLogRecord[];
+  const totalCalls = syncLogs.length;
+  const errorCount = syncLogs.filter(c => c.status === "error").length;
 
   return {
     lastSync: integration?.last_sync_at || null,
-    recentActivity: toolCalls.slice(0, 10),
+    recentActivity: syncLogs.slice(0, 10),
     errorCount,
     totalCalls,
     successRate: totalCalls > 0 ? Math.round(((totalCalls - errorCount) / totalCalls) * 100) : 100,

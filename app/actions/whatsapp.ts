@@ -1,7 +1,7 @@
 "use server";
 
 import { WhatsAppClientManager } from "@/lib/whatsapp/client";
-import { disconnectConnection } from "./integrations";
+import { disconnectConnection } from "@/lib/integrations/actions-core";
 import { requireOwnership } from "@/lib/auth-guard";
 
 // E.164 regex: + followed by 1-15 digits

@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 export interface BriefingScheduleRecord {
   id?: string;
   user_id: string;
@@ -91,8 +92,14 @@ export interface BriefingDeliveryRecord {
   created_at?: string;
 }
 
+const PRIORITY_RANK: Record<string, number> = { high: 0, normal: 1, low: 2 };
+
 export class BriefingsRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   // ── BRIEFING SCHEDULES ──
 
@@ -145,7 +152,7 @@ export class BriefingsRepository {
     return data as BriefingScheduleRecord;
   }
 
-  async updateSchedule(id: string, updates: Partial<BriefingScheduleRecord>): Promise<BriefingScheduleRecord> {
+  async updateSchedule(id: string, userId: string, updates: Partial<BriefingScheduleRecord>): Promise<BriefingScheduleRecord> {
     const now = new Date().toISOString();
     const { data, error } = await this.db.database
       .from("briefing_schedules")
@@ -154,6 +161,7 @@ export class BriefingsRepository {
         updated_at: now,
       })
       .eq("id", id)
+      .eq("user_id", userId)
       .select()
       .single();
 
@@ -309,8 +317,9 @@ export class BriefingsRepository {
     if (options?.sortBy === "oldest") {
       query = query.order("timestamp", { ascending: true });
     } else if (options?.sortBy === "priority") {
-      // Sort priority: High -> Normal -> Low
-      query = query.order("priority", { ascending: true }).order("timestamp", { ascending: false });
+      // PostgREST sorts "priority" alphabetically (h < l < n), which gives the
+      // wrong order.  Fetch by recency and re-sort in memory instead.
+      query = query.order("timestamp", { ascending: false });
     } else {
       query = query.order("timestamp", { ascending: false });
     }
@@ -324,7 +333,11 @@ export class BriefingsRepository {
 
     const { data, error } = await query;
     if (error || !data) return [];
-    return data as BriefingItemRecord[];
+    const items = data as BriefingItemRecord[];
+    if (options?.sortBy === "priority") {
+      items.sort((a, b) => (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3));
+    }
+    return items;
   }
 
   async createBriefingItem(item: Omit<BriefingItemRecord, "id" | "created_at">): Promise<BriefingItemRecord> {

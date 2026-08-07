@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 export interface NotificationCenterRecord {
   id?: string;
   user_id: string;
@@ -13,7 +14,11 @@ export interface NotificationCenterRecord {
 }
 
 export class NotificationCenterRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   async findByUserId(
     userId: string,

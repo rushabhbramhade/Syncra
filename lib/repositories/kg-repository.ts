@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 import { createAdminDb } from "@/lib/db";
 
 /**
@@ -23,7 +24,11 @@ export interface KgEdgeInput {
 }
 
 export class KgRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   async upsertNode(node: KgNodeInput): Promise<string> {
     const { data, error } = await this.db.database

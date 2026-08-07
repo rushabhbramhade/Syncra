@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 import { createAdminDb } from "@/lib/db";
 import type { NormalizedEntity } from "@/lib/integrations/types";
 
@@ -7,7 +8,11 @@ import type { NormalizedEntity } from "@/lib/integrations/types";
  * carries a unique constraint key so re-syncs upsert instead of duplicating.
  */
 export class UnifiedStoreRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   private readonly tableMap: Record<NormalizedEntity["entityKind"], string> = {
     message: "unified_messages",
@@ -65,13 +70,13 @@ export class UnifiedStoreRepository {
     const row: Record<string, unknown> = {
       user_id: userId,
       integration_id: integrationId,
-      provider_id: entity.providerId,
-      entity_kind: entity.entityKind,
       metadata: entity.metadata ?? {},
     };
 
     switch (entity.entityKind) {
       case "message":
+        row.provider_id = entity.providerId;
+        row.entity_kind = entity.entityKind;
         row.provider_message_id = entity.providerId;
         row.thread_id = entity.threadId ?? null;
         row.conversation_id = entity.conversationId ?? null;

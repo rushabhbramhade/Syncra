@@ -26,9 +26,12 @@ test.describe("Auth smoke tests", () => {
     await expect(page.getByRole("button", { name: /create.*account|get started/i })).toBeVisible();
   });
 
-  test("unauthenticated /dashboard redirects to sign-in", async ({ page }) => {
-    await page.goto("/dashboard");
-    await expect(page).toHaveURL(/\/sign-in/);
+  test("unauthenticated dashboard redirects to sign-in with the full return URL", async ({ page }) => {
+    await page.goto("/dashboard/briefing?tab=history&limit=10");
+    await expect(page).toHaveURL((url) =>
+      url.pathname === "/sign-in" &&
+      url.searchParams.get("redirect") === "/dashboard/briefing?tab=history&limit=10"
+    );
   });
 
   test("forgot-password page renders email form", async ({ page }) => {

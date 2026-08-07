@@ -1,4 +1,4 @@
-import { NotificationEvent, NotificationEventType, publishNotificationEvent } from "./events";
+import { NotificationEvent, publishNotificationEvent } from "./events";
 import { notificationQueue } from "./queue";
 import { notificationLogger } from "./logger";
 import { eventLogger } from "./logger";
@@ -17,7 +17,8 @@ class NotificationEventHandler {
       publishNotificationEvent.subscribe("integration_connected", this.handleIntegrationConnected.bind(this)),
       publishNotificationEvent.subscribe("integration_disconnected", this.handleIntegrationDisconnected.bind(this)),
       publishNotificationEvent.subscribe("ai_workspace_alert", this.handleAIWorkspaceAlert.bind(this)),
-      publishNotificationEvent.subscribe("system_notification", this.handleSystemNotification.bind(this))
+      publishNotificationEvent.subscribe("system_notification", this.handleSystemNotification.bind(this)),
+      publishNotificationEvent.subscribe("briefing_generation_failed", this.handleBriefingFailed.bind(this))
     );
 
     notificationLogger.info("Notification event handlers initialized");
@@ -77,6 +78,10 @@ class NotificationEventHandler {
 
   private async handleSystemNotification(event: NotificationEvent): Promise<void> {
     await this.enqueueFromEvent(event, "system_notifications", "System Notification", event.data);
+  }
+
+  private async handleBriefingFailed(event: NotificationEvent): Promise<void> {
+    await this.enqueueFromEvent(event, "system_notifications", "Briefing Generation Failed", event.data);
   }
 }
 

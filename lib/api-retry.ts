@@ -1,3 +1,8 @@
+interface HttpError extends Error {
+  status?: number;
+  response?: { status?: number };
+}
+
 interface RetryOptions {
   maxRetries?: number;
   baseDelayMs?: number;
@@ -20,7 +25,8 @@ export async function withRetry<T>(
       lastError = err instanceof Error ? err : new Error(String(err));
       if (attempt >= maxRetries) break;
 
-      const status = (err as any)?.status || (err as any)?.response?.status || 0;
+      const httpErr = err as HttpError;
+      const status = httpErr.status || httpErr.response?.status || 0;
       if (status !== 0 && !HTTP_RETRYABLE_STATUSES.has(status)) break;
 
       const delay = Math.min(baseDelayMs * Math.pow(2, attempt) + Math.random() * 1000, maxDelayMs);
@@ -38,8 +44,8 @@ export async function fetchWithRetry(
   return withRetry(async () => {
     const res = await fetch(url, init);
     if (!res.ok) {
-      const err = new Error(`HTTP ${res.status}: ${res.statusText}`);
-      (err as any).status = res.status;
+      const err = new Error(`HTTP ${res.status}: ${res.statusText}`) as HttpError;
+      err.status = res.status;
       throw err;
     }
     return res;

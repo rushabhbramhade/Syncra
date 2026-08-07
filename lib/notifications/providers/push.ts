@@ -25,7 +25,7 @@ export class PushProvider implements NotificationProvider {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              to: (sub.subscription as any)?.endpoint,
+              to: (sub.subscription as Record<string, unknown>)?.endpoint,
               notification: {
                 title: notification.title,
                 body: notification.body,

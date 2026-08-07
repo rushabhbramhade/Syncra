@@ -1,8 +1,8 @@
 "use server";
 
 import { createAdminDb } from "@/lib/db";
-import { generateJsonResponse } from "@/lib/ai-service";
 import { notificationQueue } from "@/lib/notifications/queue";
+import { requireOwnership } from "@/lib/auth-guard";
 
 interface DigestData {
   summary: string;
@@ -31,7 +31,7 @@ export class DigestService {
 
     return {
       summary: latest.executive_summary || "No summary available.",
-      topItems: (items || []).map((i: any) => ({ platform: i.platform, text: i.text })),
+      topItems: (items || []).map((i: Record<string, unknown>) => ({ platform: i.platform as string, text: i.text as string })),
       priorityCount: latest.priority_score || 0,
     };
   }
@@ -56,6 +56,8 @@ export class DigestService {
 }
 
 export async function sendDailyDigestAction(userId: string, channels: string[]): Promise<{ success: boolean }> {
+  const guard = await requireOwnership(userId);
+  if ("error" in guard) throw new Error(guard.error);
   const service = new DigestService();
   await service.sendDigest(userId, channels);
   return { success: true };

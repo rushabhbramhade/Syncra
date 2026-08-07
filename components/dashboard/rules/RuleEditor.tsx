@@ -61,7 +61,7 @@ export function RuleEditor({ rules, onSave }: RuleEditorProps) {
                       <span className="text-[11px] text-text-slate">{cond.operator}</span>
                       <input
                         type="text"
-                        value={cond.value}
+                        value={String(cond.value ?? "")}
                         onChange={(e) => updateCondition(rule.id, i, e.target.value)}
                         className="flex-1 text-[12px] px-2 py-1 rounded-lg border border-border-mist bg-background-mist focus:outline-none focus:border-primary"
                       />

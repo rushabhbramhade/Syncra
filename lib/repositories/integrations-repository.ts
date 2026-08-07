@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 import { encrypt, decrypt } from "@/lib/crypto";
 
 export type SyncStatus = "idle" | "syncing" | "success" | "error" | "expired";
@@ -40,7 +41,11 @@ export interface SyncLogRecord {
 }
 
 export class IntegrationsRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   async findAllByProvider(provider: string): Promise<IntegrationRecord[]> {
     const { data, error } = await this.db.database

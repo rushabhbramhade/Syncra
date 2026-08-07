@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { saveConnection } from "@/app/actions/integrations";
+import { saveConnection } from "@/lib/integrations/actions-core";
 import { verifyStateFull } from "@/lib/oauth-state";
 import { getCanonicalOrigin } from "@/lib/oauth";
 import { SlackApiService } from "@/lib/integrations/slack-provider";

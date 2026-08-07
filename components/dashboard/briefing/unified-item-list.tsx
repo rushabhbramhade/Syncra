@@ -125,10 +125,17 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
       const cat = item.category.toLowerCase();
       const priority = item.priority.toLowerCase();
 
+      const meta = (item.metadata || {}) as Record<string, unknown>;
+      const isMention =
+        cat === "mentions" ||
+        Boolean(meta.mentions) ||
+        Boolean(meta.isMention) ||
+        String(meta.title || "").toLowerCase().includes("@");
+
       if (smartFilter === "high" && priority !== "high") return false;
-      if (smartFilter === "medium" && priority !== "normal") return false;
+      if (smartFilter === "medium" && priority !== "normal" && priority !== "medium") return false;
       if (smartFilter === "low" && priority !== "low") return false;
-      if (smartFilter === "mentions" && cat !== "mentions") return false;
+      if (smartFilter === "mentions" && !isMention) return false;
       if (smartFilter === "needs_reply" && !["email", "messages", "mentions", "followups", "follow-ups", "follow_ups"].includes(cat)) return false;
       if (smartFilter === "unread" && item.status !== "unread") return false;
       if (smartFilter === "today" && !isToday(item.timestamp)) return false;
@@ -354,8 +361,10 @@ function isToday(timestamp: string): boolean {
 function isThisWeek(timestamp: string): boolean {
   const d = new Date(timestamp);
   const now = new Date();
-  const day = 7 * 24 * 60 * 60 * 1000;
-  return now.getTime() - d.getTime() < day;
+  if (isNaN(d.getTime())) return false;
+  const msInWeek = 7 * 24 * 60 * 60 * 1000;
+  const diff = now.getTime() - d.getTime();
+  return diff >= -msInWeek && diff <= msInWeek;
 }
 
 export default UnifiedItemList;

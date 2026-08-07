@@ -17,6 +17,7 @@ export interface GmailEmailSummary {
   to: string;
   subject: string;
   date: string;
+  rawDate?: string;
   snippet: string;
   unread: boolean;
 }
@@ -248,7 +249,7 @@ export class GmailService {
       data.messages.map(async (msg: { id: string; threadId: string }) => {
         try {
           const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`;
-          const detailRes = await fetch(detailUrl, {
+          const detailRes = await fetchWithRetry(detailUrl, {
             headers: { Authorization: `Bearer ${accessToken}` },
           });
 
@@ -281,6 +282,7 @@ export class GmailService {
               to,
               subject,
               date: formattedDate,
+              rawDate: dateStr || undefined,
               snippet: detail.snippet || "",
               unread: detail.labelIds?.includes("UNREAD") || false,
             });

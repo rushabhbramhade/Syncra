@@ -2,7 +2,7 @@ export type StreamEventType = 'event_scored' | 'briefing_generated' | 'rule_upda
 
 export interface StreamEvent {
   type: StreamEventType;
-  data: any;
+  data: Record<string, unknown>;
   timestamp: string;
 }
 
@@ -11,7 +11,7 @@ type Listener = (event: StreamEvent) => void;
 const listeners: Map<string, Set<Listener>> = new Map();
 
 export function emitStreamEvent(event: StreamEvent): void {
-  const userListeners = listeners.get(event.data?.userId);
+  const userListeners = listeners.get(event.data?.userId as string);
   if (userListeners) {
     for (const listener of userListeners) {
       try {

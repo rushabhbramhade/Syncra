@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 export interface AIConversationRecord {
   id: string;
   user_id: string;
@@ -58,7 +59,11 @@ export interface AIWorkspaceMemoryRecord {
 }
 
 export class AIChatRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   // ── AI CONVERSATIONS ──
 

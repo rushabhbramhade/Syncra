@@ -1,8 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession, type CookieStore } from "@insforge/sdk/ssr/middleware";
 
+function redirectWithSessionCookies(url: URL, response: NextResponse) {
+  const redirect = NextResponse.redirect(url);
+  response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
+  return redirect;
+}
+
 export async function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
+  const isProtectedRoute = pathname === "/dashboard" || pathname.startsWith("/dashboard/") || pathname === "/app" || pathname.startsWith("/app/");
+  const isAuthRoute = pathname === "/sign-in" || pathname === "/sign-up";
 
   const response = NextResponse.next({ request });
 
@@ -22,17 +30,19 @@ export async function proxy(request: NextRequest) {
     console.error("proxy: updateSession failed, treating as unauthenticated", err);
   }
 
-  if (!accessToken) {
+  if (!accessToken && isProtectedRoute) {
     const signInUrl = new URL("/sign-in", request.url);
-    signInUrl.searchParams.set("redirect", pathname);
-    const redirect = NextResponse.redirect(signInUrl);
-    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
-    return redirect;
+    signInUrl.searchParams.set("redirect", `${pathname}${search}`);
+    return redirectWithSessionCookies(signInUrl, response);
+  }
+
+  if (accessToken && isAuthRoute) {
+    return redirectWithSessionCookies(new URL("/dashboard", request.url), response);
   }
 
   return response;
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/app/:path*"],
+  matcher: ["/dashboard/:path*", "/app/:path*", "/sign-in", "/sign-up"],
 };

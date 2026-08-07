@@ -4,9 +4,44 @@ import React, { useState, useEffect, useCallback } from "react";
 import { DashboardSidebar } from "@/components/dashboard/sidebar";
 import { DashboardTopNav } from "@/components/dashboard/top-nav";
 import { ThemeProvider } from "@/components/theme-provider";
-import { AuthProvider } from "@/components/auth-provider";
+import { AuthProvider, useAuth } from "@/components/auth-provider";
 
 const SIDEBAR_KEY = "syncra-sidebar-collapsed";
+
+function DashboardSessionGate({ children }: { children: React.ReactNode }) {
+  const { user, dbUser, isLoading, errorMsg, refreshSession } = useAuth();
+
+  if (errorMsg) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background-mist p-6">
+        <div className="w-full max-w-md rounded-2xl border border-red-200 bg-white p-6 text-center shadow-sm">
+          <h1 className="text-lg font-bold text-secondary">Workspace unavailable</h1>
+          <p className="mt-2 text-sm text-text-slate">{errorMsg}</p>
+          <button
+            type="button"
+            onClick={() => void refreshSession()}
+            className="mt-5 rounded-xl bg-primary px-5 py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading || !user || !dbUser) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background-mist">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/25 border-t-primary" />
+          <p className="text-[14px] font-bold text-text-slate">Loading workspace…</p>
+        </div>
+      </div>
+    );
+  }
+
+  return children;
+}
 
 export default function DashboardLayout({
   children,
@@ -100,8 +135,9 @@ export default function DashboardLayout({
 
   return (
     <AuthProvider>
-      <ThemeProvider>
-        <div className="flex h-screen overflow-hidden bg-background-mist font-sans">
+      <DashboardSessionGate>
+        <ThemeProvider>
+          <div className="flex h-screen overflow-hidden bg-background-mist font-sans">
           {/* ── Sidebar ── */}
           <DashboardSidebar
             collapsed={collapsed}
@@ -122,8 +158,9 @@ export default function DashboardLayout({
               </div>
             </main>
           </div>
-        </div>
-      </ThemeProvider>
+          </div>
+        </ThemeProvider>
+      </DashboardSessionGate>
     </AuthProvider>
   );
 }

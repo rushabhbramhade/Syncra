@@ -31,7 +31,7 @@ export const IntegrationEvents = {
     for (const fn of set) {
       try {
         fn(event);
-      } catch {}
+      } catch (err) { console.error("[IntegrationEvents] listener error:", err); }
     }
   },
 };

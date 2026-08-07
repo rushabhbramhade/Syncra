@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createAuthActions } from "@insforge/sdk/ssr";
-import { syncUserToDatabase } from "@/app/actions";
+import { syncUserToDatabase } from "@/lib/auth/user-sync";
 
 export async function GET(request: NextRequest) {
   try {

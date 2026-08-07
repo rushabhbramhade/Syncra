@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 export interface UserRecord {
   id: string;
   auth_user_id: string;
@@ -20,7 +21,11 @@ export interface UserInput {
 }
 
 export class UsersRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   async findByDbId(dbUserId: string): Promise<UserRecord | null> {
     const { data, error } = await this.db.database

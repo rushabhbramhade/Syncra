@@ -1,4 +1,6 @@
-import { createAdminClient } from "@insforge/sdk";
+import "server-only";
+
+import { createAdminDb } from "@/lib/db";
 
 interface RateLimitConfig {
   windowMs: number;
@@ -19,18 +21,17 @@ const TIER_MULTIPLIERS: Record<string, number> = {
 
 interface RateLimitResult {
   allowed: boolean;
+  limit: number;
   remaining: number;
   resetAt: number;
   retryAfterMs: number;
 }
 
-function createDb() {
-  const baseUrl = process.env.NEXT_PUBLIC_INSFORGE_BASE_URL;
-  const apiKey = process.env.INSFORGE_API_KEY;
-  if (!baseUrl || !apiKey) {
-    throw new Error("Missing InsForge configuration");
-  }
-  return createAdminClient({ baseUrl, apiKey });
+interface RateLimitRpcRow {
+  allowed: boolean;
+  remaining: number;
+  reset_at_ms: number | string;
+  retry_after_ms: number | string;
 }
 
 export async function checkRateLimit(
@@ -42,62 +43,49 @@ export async function checkRateLimit(
   const multiplier = TIER_MULTIPLIERS[userTier] || 1;
   const maxRequests = config.maxRequests * multiplier;
 
-  const db = createDb();
   const now = Date.now();
-  const windowStart = now - config.windowMs;
 
   try {
-    try {
-      await db.database.rpc("cleanup_rate_limits", {});
-    } catch {}
+    const db = createAdminDb();
+    const { data, error } = await db.database.rpc("consume_rate_limit", {
+      p_user_id: userId,
+      p_bucket: bucket,
+      p_window_ms: config.windowMs,
+      p_max_requests: maxRequests,
+    });
 
-    const { data: existing } = await db.database
-      .from("rate_limits")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("bucket", bucket)
-      .maybeSingle();
-
-    if (!existing) {
-      await db.database.from("rate_limits").insert({
-        user_id: userId,
-        bucket,
-        count: 1,
-        window_start: new Date(windowStart).toISOString(),
-        reset_at: new Date(now + config.windowMs).toISOString(),
-      });
-      return { allowed: true, remaining: maxRequests - 1, resetAt: now + config.windowMs, retryAfterMs: 0 };
+    if (error) {
+      throw new Error(`Rate limit RPC failed: ${error.message}`);
     }
 
-    const existingWindowStart = new Date(existing.window_start).getTime();
-    if (existingWindowStart < windowStart) {
-      await db.database.from("rate_limits").update({
-        count: 1,
-        window_start: new Date(windowStart).toISOString(),
-        reset_at: new Date(now + config.windowMs).toISOString(),
-      }).eq("id", existing.id);
-      return { allowed: true, remaining: maxRequests - 1, resetAt: now + config.windowMs, retryAfterMs: 0 };
+    const row = (Array.isArray(data) ? data[0] : data) as RateLimitRpcRow | null;
+    if (!row || typeof row.allowed !== "boolean") {
+      throw new Error("Rate limit RPC returned an invalid response");
     }
 
-    const currentCount = (existing.count || 0) + 1;
-    const resetAt = new Date(existing.reset_at).getTime();
-    const retryAfterMs = Math.max(0, resetAt - now);
-
-    if (currentCount > maxRequests) {
-      return { allowed: false, remaining: 0, resetAt, retryAfterMs };
-    }
-
-    await db.database.from("rate_limits").update({ count: currentCount }).eq("id", existing.id);
-    return { allowed: true, remaining: maxRequests - currentCount, resetAt, retryAfterMs };
+    return {
+      allowed: row.allowed,
+      limit: maxRequests,
+      remaining: Number(row.remaining),
+      resetAt: Number(row.reset_at_ms),
+      retryAfterMs: Number(row.retry_after_ms),
+    };
   } catch (error) {
-    console.error("Rate limiter error (allowing through):", error);
-    return { allowed: true, remaining: 1, resetAt: now + 60_000, retryAfterMs: 0 };
+    const failClosed = bucket === "ai-agent";
+    console.error("Rate limiter unavailable", { bucket, userId, failClosed, error });
+    return {
+      allowed: !failClosed,
+      limit: maxRequests,
+      remaining: 0,
+      resetAt: now + config.windowMs,
+      retryAfterMs: failClosed ? config.windowMs : 0,
+    };
   }
 }
 
 export function getRateLimitHeaders(result: RateLimitResult): Record<string, string> {
   return {
-    "X-RateLimit-Limit": String(result.remaining + (result.allowed ? 1 : 0)),
+    "X-RateLimit-Limit": String(result.limit),
     "X-RateLimit-Remaining": String(result.remaining),
     "X-RateLimit-Reset": String(Math.ceil(result.resetAt / 1000)),
     "Retry-After": String(Math.ceil(result.retryAfterMs / 1000)),

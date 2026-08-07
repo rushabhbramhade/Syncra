@@ -11,7 +11,6 @@ export function deduplicate(events: NormalizedEvent[]): NormalizedEvent[] {
     } else {
       // Keep the one with higher score, merge metadata
       if (event.score > existing.score) {
-        existing.crossRefs = [...existing.crossRefs, existing.sourceEventId];
         event.crossRefs = [...event.crossRefs, existing.sourceEventId];
         seen.set(event.dedupHash, event);
       } else {

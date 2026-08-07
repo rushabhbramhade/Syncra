@@ -1,3 +1,4 @@
+import type { AdminDb } from "./types";
 import { createAdminDb } from "@/lib/db";
 
 export interface AuditLogInput {
@@ -10,7 +11,11 @@ export interface AuditLogInput {
 }
 
 export class AuditLogRepository {
-  constructor(private db: { database: { from(table: string): any } }) {}
+  private db: AdminDb;
+
+  constructor(db: AdminDb) {
+    this.db = db;
+  }
 
   async record(input: AuditLogInput): Promise<void> {
     try {

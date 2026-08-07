@@ -1,5 +1,6 @@
 "use client";
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import Image from "next/image";
 import { Card } from "@/components/ui/card";
 import { Skeleton, CardSkeleton, BriefItemSkeleton, PriorityItemSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth-provider";
@@ -43,7 +44,7 @@ function mapBriefingToCard(briefing: BriefingRecord, items: BriefingItemRecord[]
     generatedAt: briefing.generated_at,
     executiveSummary: briefing.executive_summary,
     id: briefing.id,
-    importantCount: briefing.priority_score || itemsInOrder.length,
+    importantCount: itemsInOrder.length,
     priorityCount: highInt.length,
     followUpsCount: followUps.length,
     briefItems: itemsInOrder.slice(0, 5).map(i => ({
@@ -66,16 +67,11 @@ function mapBriefingToCard(briefing: BriefingRecord, items: BriefingItemRecord[]
 export default function Dashboard() {
   const { user, dbUser, isLoading, clearSession } = useAuth();
 
-  useEffect(() => {
-    if (!isLoading && !user) {
-      window.location.href = "/sign-in";
-    }
-  }, [user, isLoading]);
-
   const activeUserId = dbUser?.id;
   const authUserId = user?.id;
   const isDbReady = !!activeUserId;
 
+  const isLoadingRef = useRef(false);
   const [isSignOutLoading, setIsSignOutLoading] = useState(false);
   const [briefData, setBriefData] = useState<ExtendedBriefData | null>(null);
   const [isBriefLoading, setIsBriefLoading] = useState(true);
@@ -90,12 +86,14 @@ export default function Dashboard() {
 
   const loadDashboardData = useCallback(async () => {
     if (!user || !activeUserId || !authUserId) return;
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
     setIsBriefLoading(true);
     setDataError(null);
 
     try {
       const { getConnectionStatus } = await import("@/app/actions/integrations");
-      const providerIds = ["gmail", "outlook", "slack", "whatsapp", "telegram", "discord", "linkedin", "github", "calendar", "notion", "linear"];
+      const providerIds = ["gmail", "slack", "whatsapp", "telegram", "discord", "linkedin", "github", "calendar"];
       const results = await Promise.allSettled(
         providerIds.map(id => getConnectionStatus(authUserId, id))
       );
@@ -137,9 +135,10 @@ export default function Dashboard() {
       setDataError("Unable to load dashboard data. Please try again.");
     } finally {
       setIsBriefLoading(false);
+      isLoadingRef.current = false;
     }
 
-  }, [user, activeUserId]);
+  }, [user, activeUserId, authUserId]);
 
   const handleRegenerate = async () => {
     if (!user || !activeUserId) return;
@@ -172,6 +171,9 @@ export default function Dashboard() {
   useEffect(() => {
     if (!user || !isDbReady) return;
     const es = new EventSource("/api/dashboard/stream");
+    es.onerror = () => {
+      console.warn("[Dashboard] SSE stream error; events will not be received until reconnect.");
+    };
     es.onmessage = (msg) => {
       try {
         const event = JSON.parse(msg.data) as { type?: string };
@@ -199,7 +201,7 @@ export default function Dashboard() {
   const renderAppIcon = (platform: string, className = "w-5 h-5") => {
     const app = connectedApps.find(a => a.id === platform.toLowerCase());
     if (app && app.icon) {
-      return <img src={app.icon} alt={app.name} className={`object-contain ${className}`} />;
+      return <Image src={app.icon} alt={app.name} width={20} height={20} className={`object-contain ${className}`} />;
     }
     if (platform === "gmail") return <Mail className={`text-text-slate ${className}`} />;
     if (platform === "slack" || platform === "whatsapp" || platform === "telegram") return <MessageCircle className={`text-text-slate ${className}`} />;
@@ -254,6 +256,7 @@ export default function Dashboard() {
         onRegenerate={handleRegenerate}
         onSignOut={handleSignOut}
         isRegenerating={isBriefLoading}
+        isSigningOut={isSignOutLoading}
       />
 
       <StatsOverview

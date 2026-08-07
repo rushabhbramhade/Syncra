@@ -8,9 +8,10 @@ interface DashboardHeaderProps {
   onRegenerate: () => void;
   onSignOut: () => void;
   isRegenerating: boolean;
+  isSigningOut: boolean;
 }
 
-export function DashboardHeader({ userName, onRegenerate, onSignOut, isRegenerating }: DashboardHeaderProps) {
+export function DashboardHeader({ userName, onRegenerate, onSignOut, isRegenerating, isSigningOut }: DashboardHeaderProps) {
   return (
     <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
       <div>
@@ -35,9 +36,11 @@ export function DashboardHeader({ userName, onRegenerate, onSignOut, isRegenerat
         <Button
           variant="ghost"
           onClick={onSignOut}
+          disabled={isSigningOut}
+          aria-label={isSigningOut ? "Signing out" : "Sign out"}
           className="text-text-slate hover:text-error hover:bg-error-bg font-bold flex items-center gap-2 px-3 py-1.5 border-[2px] border-transparent hover:border-error rounded-[14px] h-11"
         >
-          <LogOut className="w-4 h-4" />
+          <LogOut className={`w-4 h-4 ${isSigningOut ? "animate-pulse" : ""}`} />
         </Button>
       </div>
     </div>

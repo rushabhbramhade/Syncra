@@ -1,12 +1,12 @@
 import { NormalizedEvent } from "../events/normalized-event";
 import { Rule, RuleCondition, RuleAction, RuleMatch, ConditionOperator } from "./types";
 
-function getFieldValue(event: NormalizedEvent, field: string): any {
+function getFieldValue(event: NormalizedEvent, field: string): unknown {
   const parts = field.split(".");
-  let value: any = event;
+  let value: unknown = event;
   for (const part of parts) {
     if (value === null || value === undefined) return undefined;
-    value = value[part];
+    value = (value as Record<string, unknown>)[part];
   }
   return value;
 }
@@ -36,7 +36,7 @@ function evaluateCondition(event: NormalizedEvent, condition: RuleCondition): bo
       if (Array.isArray(condition.value)) return !condition.value.includes(value);
       return true;
     case "regex":
-      if (typeof value === "string") return new RegExp(condition.value, "i").test(value);
+      if (typeof value === "string") return new RegExp(String(condition.value), "i").test(value);
       return false;
     case "exists":
       return value !== null && value !== undefined;
@@ -50,14 +50,16 @@ function evaluateCondition(event: NormalizedEvent, condition: RuleCondition): bo
 function applyAction(event: NormalizedEvent, action: RuleAction): void {
   switch (action.type) {
     case "setPriority":
-      event.priority = action.value;
+      event.priority = action.value as NormalizedEvent["priority"];
       break;
     case "adjustScore":
       event.score = Math.max(0, Math.min(100, event.score + Number(action.value)));
       break;
-    case "addTag":
-      if (!event.labels.includes(action.value)) event.labels.push(action.value);
+    case "addTag": {
+      const tag = String(action.value);
+      if (!event.labels.includes(tag)) event.labels.push(tag);
       break;
+    }
     case "markFollowUp":
       if (!event.labels.includes("follow-up")) event.labels.push("follow-up");
       break;
@@ -66,7 +68,7 @@ function applyAction(event: NormalizedEvent, action: RuleAction): void {
       if (event.score < 85) event.score = Math.min(100, event.score + 10);
       break;
     case "setExplanation":
-      event.explanation = action.value;
+      event.explanation = String(action.value);
       break;
   }
 }

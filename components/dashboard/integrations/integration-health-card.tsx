@@ -2,18 +2,18 @@
 
 import React, { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
-import { Activity, CheckCircle2, XCircle, Clock, RefreshCw } from "lucide-react";
+import { Activity, CheckCircle2, XCircle, Clock } from "lucide-react";
 
-interface ToolCallRecord {
-  tool_name: string;
+interface SyncLogRecord {
   status: string;
-  duration: number | null;
+  message: string | null;
+  duration_ms: number | null;
   created_at: string;
 }
 
 interface HealthData {
   lastSync: string | null;
-  recentActivity: ToolCallRecord[];
+  recentActivity: SyncLogRecord[];
   errorCount: number;
   totalCalls: number;
   successRate: number;
@@ -70,9 +70,9 @@ export function IntegrationHealthCard({ userId, provider }: Props) {
               <div className="space-y-1 max-h-32 overflow-y-auto">
                 {health.recentActivity.map((act, i) => (
                   <div key={i} className="flex items-center gap-2 text-[10px]">
-                    {act.status === "success" ? <CheckCircle2 className="w-3 h-3 text-success shrink-0" /> : <XCircle className="w-3 h-3 text-error shrink-0" />}
-                    <span className="truncate flex-1">{act.tool_name}</span>
-                    {act.duration && <span className="shrink-0"><Clock className="w-3 h-3 inline mr-0.5" />{act.duration}ms</span>}
+                    {act.status === "success" || act.status === "refresh" ? <CheckCircle2 className="w-3 h-3 text-success shrink-0" /> : <XCircle className="w-3 h-3 text-error shrink-0" />}
+                    <span className="truncate flex-1">{act.message || act.status}</span>
+                    {act.duration_ms && <span className="shrink-0"><Clock className="w-3 h-3 inline mr-0.5" />{act.duration_ms}ms</span>}
                   </div>
                 ))}
               </div>
