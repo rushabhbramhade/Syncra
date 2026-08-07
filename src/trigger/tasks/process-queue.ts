@@ -14,6 +14,11 @@ export const processQueue = schedules.task({
     for (const record of due) {
       if (!record.id) continue;
 
+      // Atomically claim this row so only one tick (and no second cron run)
+      // owns it. Rows already claimed as "processing" are skipped.
+      const claimed = await history.claimForProcessing(record.id);
+      if (!claimed) continue;
+
       try {
         await sendNotification.trigger({
           userId: record.user_id,
@@ -24,6 +29,8 @@ export const processQueue = schedules.task({
           idempotencyKey: record.id,
         });
       } catch (error) {
+        // Release the claim so a later tick can retry.
+        await history.releaseForProcessing(record.id);
         console.error(`processQueue: failed to trigger notification ${record.id}:`, error);
       }
     }

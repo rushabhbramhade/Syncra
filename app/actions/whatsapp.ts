@@ -107,8 +107,8 @@ export async function startWhatsAppQRAction(userId: string) {
   try {
     const guard = await requireOwnership(userId);
     if ("error" in guard) return { success: false, error: guard.error };
-    const { qr } = await WhatsAppClientManager.startPairingQR(userId);
-    return { success: true, qr, status: "pending" as const };
+    const { qr, expiresAt } = await WhatsAppClientManager.startPairingQR(userId);
+    return { success: true, qr, expiresAt, status: "pending" as const };
   } catch (error: unknown) {
     console.error("startWhatsAppQRAction failed:", error);
     const errorMsg = error instanceof Error ? error.message : "Failed to start WhatsApp pairing.";
@@ -126,7 +126,7 @@ export async function getWhatsAppQRAction(userId: string) {
     const state = WhatsAppClientManager.getPairingQR(userId);
     if (!state) return { success: true, status: "none" as const };
     if (state.connected) return { success: true, status: "connected" as const };
-    if (state.qr) return { success: true, status: "pending" as const, qr: state.qr };
+    if (state.qr) return { success: true, status: "pending" as const, qr: state.qr, expiresAt: state.expiresAt };
     return { success: true, status: "pending" as const };
   } catch (error: unknown) {
     console.error("getWhatsAppQRAction failed:", error);
@@ -136,14 +136,15 @@ export async function getWhatsAppQRAction(userId: string) {
 }
 
 /**
- * Destroys the current pairing session and starts a fresh QR.
+ * NON-destructive QR renewal — keeps the pairing session + auth state + DB
+ * session alive and only regenerates the socket + QR. No re-link required.
  */
 export async function refreshWhatsAppQRAction(userId: string) {
   try {
     const guard = await requireOwnership(userId);
     if ("error" in guard) return { success: false, error: guard.error };
-    const { qr } = await WhatsAppClientManager.refreshPairingQR(userId);
-    return { success: true, qr, status: "pending" as const };
+    const { qr, expiresAt } = await WhatsAppClientManager.refreshPairingQR(userId);
+    return { success: true, qr, expiresAt, status: "pending" as const };
   } catch (error: unknown) {
     console.error("refreshWhatsAppQRAction failed:", error);
     const errorMsg = error instanceof Error ? error.message : "Failed to refresh WhatsApp QR.";

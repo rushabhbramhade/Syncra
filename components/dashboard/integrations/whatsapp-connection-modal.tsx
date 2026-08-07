@@ -4,7 +4,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { Smartphone, X, Loader2, CheckCircle2, AlertCircle, RefreshCw, Phone, QrCode, Copy, Check } from "lucide-react";
 
-const QR_TTL_SECONDS = 20;
+const QR_TTL_SECONDS = 60;
 const CODE_TTL_SECONDS = 120;
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
 
@@ -15,6 +15,9 @@ export interface WhatsAppConnectionModalProps {
   onClose: () => void;
   // QR flow
   qr: string | null;
+  // Backend-driven QR expiry (absolute epoch ms). Single source of truth for
+  // the countdown — the frontend never hardcodes its own TTL.
+  qrExpiresAt?: number | null;
   // Pairing code flow
   code: string | null;
   // Shared
@@ -35,6 +38,7 @@ function WhatsAppConnectionModal({
   isOpen,
   onClose,
   qr,
+  qrExpiresAt,
   code,
   isLoading,
   error,
@@ -53,11 +57,17 @@ function WhatsAppConnectionModal({
   const [copied, setCopied] = useState(false);
   const lastValueRef = useRef<string | null>(null);
 
-  // Countdown
+  // Countdown. QR: backend-driven via qrExpiresAt (absolute epoch) — no local
+  // TTL. Code: local 120s window.
   useEffect(() => {
-    const ttl = method === "qr" ? QR_TTL_SECONDS : CODE_TTL_SECONDS;
-    setSecondsLeft(ttl);
-  }, [method, qr, code]);
+    if (method === "qr") {
+      setSecondsLeft(
+        qrExpiresAt ? Math.max(0, Math.ceil((qrExpiresAt - Date.now()) / 1000)) : QR_TTL_SECONDS,
+      );
+    } else {
+      setSecondsLeft(CODE_TTL_SECONDS);
+    }
+  }, [method, qr, code, qrExpiresAt]);
 
   useEffect(() => {
     const value = method === "qr" ? qr : code;
@@ -66,14 +76,20 @@ function WhatsAppConnectionModal({
     return () => clearInterval(t);
   }, [method, qr, code]);
 
-  // Auto-refresh on expiry
+  // Auto-refresh on expiry. QR renewal is NON-destructive on the backend (same
+  // pairing session + auth state + DB session; only the socket + QR are
+  // regenerated), so it's safe to request on countdown zero. The QR is also
+  // streamed in via the page poll (qr prop change resets the countdown). A ref
+  // guard prevents a repeat fire every tick while a refresh is in flight.
+  const expiryHandledRef = useRef(false);
   useEffect(() => {
+    if (secondsLeft > 0) { expiryHandledRef.current = false; return; }
     const value = method === "qr" ? qr : code;
-    if (value && secondsLeft <= 0) {
-      if (method === "qr") onRefreshQR();
-      else onRefreshCode();
-    }
-  }, [method, qr, code, secondsLeft, onRefreshQR, onRefreshCode]);
+    if (!value || expiryHandledRef.current || isLoading) return;
+    expiryHandledRef.current = true;
+    if (method === "qr") onRefreshQR();
+    else onRefreshCode();
+  }, [method, qr, code, secondsLeft, isLoading, onRefreshQR, onRefreshCode]);
 
   // Reset on open
   useEffect(() => {
@@ -143,7 +159,6 @@ function WhatsAppConnectionModal({
   };
 
   const currentValue = method === "qr" ? qr : code;
-  const ttl = method === "qr" ? QR_TTL_SECONDS : CODE_TTL_SECONDS;
 
   return (
     <div

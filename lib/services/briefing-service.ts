@@ -236,7 +236,31 @@ export class BriefingService {
       selectedCategories = schedule.categories;
     }
 
+    let runId: string | undefined;
+
     try {
+      // 0. Claim schedule lock + create run row (idempotency guard). Prevents a
+      // manual trigger and the cron from generating the same schedule twice, and
+      // makes every run auditable. Manual+schedule duplicates are impossible.
+      // Shared only when a null scheduleId (ad-hoc run) is supplied.
+      const workerId = String(process.pid ?? 0) + ":" + correlationId;
+      if (scheduleId) {
+        const claimed = await repo.claimSchedule(scheduleId, workerId);
+        if (!claimed) {
+          log.warn("Schedule is locked by another worker; skipping to avoid duplicate generation", { scheduleId });
+          return { success: false, error: "Briefing generation already in progress for this schedule" };
+        }
+        const run = await repo.createRun({
+          user_id: userId,
+          schedule_id: scheduleId,
+          status: "running",
+          attempt_number: 1,
+          started_at: new Date().toISOString(),
+          trigger_source: triggerSource,
+        });
+        runId = run.id;
+      }
+
       // 1. Load connected integrations — the source of truth for participation.
       // An active row in user_integrations is the ONLY gate a provider needs to
       // enter the briefing (health seat + fetch + AI request list). A connected
@@ -454,7 +478,7 @@ export class BriefingService {
         log.warn("No real data from any integration; skipping AI to avoid hallucination", { elapsedMs: Date.now() - startTime });
         if (scheduleId && schedule) {
           const nextRun = calculateNextRun(schedule.frequency, schedule.timezone);
-          await repo.updateSchedule(scheduleId, {
+          await repo.releaseSchedule(scheduleId, {
             last_run: new Date().toISOString(),
             next_run: nextRun,
           });
@@ -477,8 +501,10 @@ export class BriefingService {
             status: "completed",
           });
           log.info("Briefing generated with zero data (health-only)", { briefingId: emptyBriefing.id });
+          if (runId) await repo.completeRun(runId, emptyBriefing.id ?? "", Date.now() - startTime);
           return { success: true, briefingId: emptyBriefing.id, empty: true };
         }
+        if (runId) await repo.completeRun(runId, "", Date.now() - startTime);
         return { success: true, empty: true };
       }
 
@@ -799,10 +825,10 @@ ${buildManifest(healthReport)}`;
         }
       }
 
-      // 7. Update schedule next run
+      // 7. Update schedule next run + release lock
       if (scheduleId && schedule) {
         const nextRun = calculateNextRun(schedule.frequency, schedule.timezone);
-        await repo.updateSchedule(scheduleId, {
+        await repo.releaseSchedule(scheduleId, {
           last_run: new Date().toISOString(),
           next_run: nextRun,
         });
@@ -845,10 +871,23 @@ ${buildManifest(healthReport)}`;
       }
 
       log.info("Briefing generation completed", { briefingId, elapsedMs: Date.now() - startTime });
+      if (runId) await repo.completeRun(runId, briefingId ?? "", Date.now() - startTime);
       return { success: true, briefingId };
     } catch (error: any) {
       const errorMsg = error instanceof Error ? error.message : "Briefing generation failed";
       log.error("Briefing generation failed", { error: errorMsg, elapsedMs: Date.now() - startTime });
+
+      if (runId) {
+        await repo.failRun(runId, errorMsg, Date.now() - startTime);
+      }
+      // Release the schedule lock on failure so the next tick can retry.
+      if (scheduleId) {
+        try {
+          await repo.releaseScheduleTransient(scheduleId);
+        } catch (lockErr) {
+          log.warn("Failed to release schedule lock after failure", { err: lockErr instanceof Error ? lockErr.message : lockErr });
+        }
+      }
 
       // Store failed execution in history
       try {

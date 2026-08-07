@@ -12,13 +12,18 @@ import pino from "pino";
 import path from "path";
 import fs from "fs";
 import { saveConnection, disconnectConnection } from "@/app/actions/integrations";
-import { decideWaCloseAction } from "@/lib/whatsapp/disconnect-policy";
+import { decideWaCloseAction, decidePairingClose, decidePairingRenewal } from "@/lib/whatsapp/disconnect-policy";
 import { WhatsAppSessionsRepository } from "@/lib/repositories/whatsapp-sessions-repository";
 import { IntegrationsRepository } from "@/lib/repositories/integrations-repository";
 import { createAdminDb } from "@/lib/db";
 
 // In-memory cache of active Baileys socket connections
 const activeSockets = new Map<string, any>();
+
+// Per-user in-flight getClient() promise. Guarantees a single live socket per
+// user even under concurrent calls (double-triggered reconnects, dashboard
+// polls + briefing generation + connection-status checks racing).
+const clientLocks = new Map<string, Promise<any>>();
 
 // In-memory state for an in-progress pairing session (not yet linked)
 const pairingSessions = new Map<string, PairingState>();
@@ -27,6 +32,11 @@ interface PairingState {
   sock: any;
   // QR flow
   latestQR: string | null;
+  /** Absolute expiry of the CURRENT qr (Date.now() + WA_QR_TTL_MS). Baileys
+   * re-emits a fresh QR on the same socket every qrTimeout, so this advances
+   * automatically. The frontend countdown derives from this — never a local
+   * hardcoded TTL. */
+  qrExpiresAt: number | null;
   // Pairing code flow
   code: string | null;
   codeExpiresAt: number | null;
@@ -34,6 +44,10 @@ interface PairingState {
   connected: boolean;
   /** True once the phone approved the QR/code. NOT a verified session yet. */
   paired: boolean;
+  /** Whether the pairing socket is still alive (not closed/ended). Renewal must
+   * NEVER replace a live socket — a scan at second 59 may be mid-authorization
+   * on that exact socket, and Baileys re-emits fresh QRs on it automatically. */
+  sockAlive: boolean;
   phone: string;
   method: "qr" | "code";
 }
@@ -51,6 +65,15 @@ const socketOpen = new Set<string>();
 // Lazy socket-restore dedupe: probes from briefing/dashboard/maintenance that
 // race while a stale socket is being re-established each only fire one getClient.
 const restoring = new Set<string>();
+
+/**
+ * CQ: single source of truth for the QR lifetime. Baileys re-emits a fresh QR
+ * on the SAME socket every QR_TIMEOUT_MS (it regenerates the ref, it does not
+ * close the connection), so one socket survives the full 60s window. The
+ * frontend countdown and the socket TTL must both derive from this constant —
+ * a mismatch is exactly what made the QR "expire" in ~20s.
+ */
+export const WA_QR_TTL_MS = 60_000;
 
 export interface WhatsAppConnectionState {
   authOk: boolean;       // session creds persisted AND integration row is active
@@ -317,6 +340,13 @@ function attachClientHandlers(sock: any, userId: string) {
 
         waTrace(userId, "client_close", { statusCode, hasSession, action });
 
+        // Only the socket currently registered as live may clear state. A stale
+        // socket's close must not evict a newer connection for the same user.
+        if (activeSockets.get(userId) !== sock) {
+          waTrace(userId, "client_close_stale_ignored");
+          return;
+        }
+
         activeSockets.delete(userId);
         socketOpen.delete(userId);
 
@@ -350,6 +380,13 @@ function attachClientHandlers(sock: any, userId: string) {
         // saveConnection) → SET pairing.connected.
         // The frontend is never told Connected until sync has fully concluded.
         waTrace(userId, "socket_open");
+        // Only the live socket may advance connection state. If a newer socket
+        // already replaced this one, ignore — prevents a stale socket's open
+        // from marking the user connected or running a duplicate sync.
+        if (activeSockets.get(userId) !== sock) {
+          waTrace(userId, "socket_open_stale_ignored");
+          return;
+        }
         socketOpen.add(userId);
 
         // VERIFY sock.user exists
@@ -515,32 +552,49 @@ export class WhatsAppClientManager {
       return activeSockets.get(userId);
     }
 
+    // Single-flight: if another caller is already (re)connecting this user,
+    // await the same promise instead of creating a second socket.
+    if (!forceReconnect) {
+      const inflight = clientLocks.get(userId);
+      if (inflight) {
+        waTrace(userId, "getClient_await_inflight");
+        return inflight;
+      }
+    }
+
     waTrace(userId, "getClient_fresh", { forceReconnect });
-    const { state, saveCreds } = await useDBAuthState(userId);
+    const promise = (async () => {
+      const { state, saveCreds } = await useDBAuthState(userId);
 
-    // Pin the live web version; the bundled default goes stale and WhatsApp
-    // kills the session with 405 (client_too_old).
-    const { version: waVersion } = await fetchLatestWaWebVersion().catch(() => ({
-      version: undefined,
-    }));
+      // Pin the live web version; the bundled default goes stale and WhatsApp
+      // kills the session with 405 (client_too_old).
+      const { version: waVersion } = await fetchLatestWaWebVersion().catch(() => ({
+        version: undefined,
+      }));
 
-    const sock = makeWASocket({
-      // Full history sync pulls recent groups, DMs, archived chats, contacts
-      // and messages on connect — the basis for the complete backfill.
-      ...waSocketConfig(waVersion, { syncFullHistory: true }),
-      auth: state,
-      browser: ["Windows", "Chrome", "20.0.04"],
+      const sock = makeWASocket({
+        // Full history sync pulls recent groups, DMs, archived chats, contacts
+        // and messages on connect — the basis for the complete backfill.
+        ...waSocketConfig(waVersion, { syncFullHistory: true }),
+        auth: state,
+        browser: ["Windows", "Chrome", "20.0.04"],
+      });
+
+      sock.ev.on("creds.update", saveCreds);
+      attachClientHandlers(sock, userId);
+
+      // Reset per-user sync state on a fresh (re)connect so a reconnect still
+      // re-syncs; only the once-per-process initialSyncDone guard stays.
+      syncCounters.set(userId, { inserted: 0, skipped: 0 });
+
+      activeSockets.set(userId, sock);
+      return sock;
+    })().finally(() => {
+      clientLocks.delete(userId);
     });
 
-    sock.ev.on("creds.update", saveCreds);
-    attachClientHandlers(sock, userId);
-
-    // Reset per-user sync state on a fresh (re)connect so a reconnect still
-    // re-syncs; only the once-per-process initialSyncDone guard stays.
-    syncCounters.set(userId, { inserted: 0, skipped: 0 });
-
-    activeSockets.set(userId, sock);
-    return sock;
+    clientLocks.set(userId, promise);
+    return promise;
   }
 
   /**
@@ -577,7 +631,7 @@ export class WhatsAppClientManager {
       logger: pino({ level: "debug", name: "baileys-pairing" }) as any,
     });
 
-    const pairing: PairingState = { sock, latestQR: null, code: null, codeExpiresAt: null, connected: false, paired: false, phone, method: "code" };
+    const pairing: PairingState = { sock, latestQR: null, qrExpiresAt: null, code: null, codeExpiresAt: null, connected: false, paired: false, sockAlive: true, phone, method: "code" };
     pairingSessions.set(userId, pairing);
     waTrace(userId, "socket_created");
 
@@ -586,6 +640,10 @@ export class WhatsAppClientManager {
     sock.ev.on("creds.update", async (credsPayload: any) => {
       try {
         await saveCreds(credsPayload);
+        if (credsPayload?.me?.id && !pairing.paired) {
+          pairing.paired = true;
+          waTrace(userId, "code_creds_me_id");
+        }
         waTrace(userId, "creds_saved");
       } catch (e) {
         console.error(`[wa-auth] creds.save FAILED userId=${userId}`, e);
@@ -635,12 +693,19 @@ export class WhatsAppClientManager {
                 .catch((e) => console.error(`[wa-auth] reconnect FAILED userId=${userId}`, e));
             }, 1000);
           } else {
-            // Failed before authorization — never created a usable session.
-            pairingSessions.delete(userId);
-            try {
-              const session = await sessionsRepo.getSession(userId);
-              if (!(session?.creds as any)?.me?.id) await sessionsRepo.deleteSession(userId);
-            } catch {}
+            // Pre-auth close. Only a genuine 401 (phone revoked) tears down; any
+            // transient close keeps the pairing + session so the user can renew
+            // without re-linking (mirrors the QR path + shared pairing policy).
+            const action = decidePairingClose(code, pairing.paired);
+            if (action === "teardown_session") {
+              pairingSessions.delete(userId);
+              try { await sessionsRepo.deleteSession(userId); } catch {}
+              try { await disconnectConnection(userId, "whatsapp"); } catch (e) {
+                console.error("Failed to delete connection on code logout:", e);
+              }
+            } else {
+              waTrace(userId, "code_kept_on_transient_close", { statusCode: code, action });
+            }
           }
         }
       } catch (e) {
@@ -709,43 +774,49 @@ export class WhatsAppClientManager {
   }
 
   /**
-   * Starts a QR-based Baileys pairing session and returns the first QR payload.
+   * Shared QR socket builder + handler wiring. Used by BOTH the destructive
+   * entry (startPairingQR) and the non-destructive renewal (renewPairingQR) so
+   * both paths behave identically.
+   *
+   * QR expiry (Baileys qrTimeout) re-emits a fresh `qr` on the SAME socket —
+   * it never closes. So a "close" event on this socket is either:
+   *  - a genuine logout (401) → teardown the session (only legit destroyer),
+   *  - a transient failure (network drop / server restart / refs exhausted)
+   *    BEFORE the phone authorized → keep the pairing state + DB session alive;
+   *    the frontend renews non-destructively to get a fresh QR.
+   *  - a post-pair restart → reconnect to the verified getClient path.
    */
-  public static async startPairingQR(userId: string): Promise<{ qr: string }> {
-    const cleanPairing = () => {
-      const existing = pairingSessions.get(userId);
-      if (existing) {
-        try { existing.sock.end(undefined); } catch {}
-        pairingSessions.delete(userId);
-      }
-      if (activeSockets.has(userId)) {
-        try { activeSockets.get(userId).end(undefined); } catch {}
-        activeSockets.delete(userId);
-        socketOpen.delete(userId);
-      }
-    };
-    cleanPairing();
-
-    await sessionsRepo.deleteSession(userId);
-    const { state, saveCreds, flush } = await useDBAuthState(userId);
-
+  private static async buildQRSocket(
+    userId: string,
+    auth: { saveCreds: (c?: any) => Promise<void>; flush: () => Promise<void> },
+    pairing: PairingState,
+    authState: any,
+  ) {
     const { version: waVersion } = await fetchLatestWaWebVersion().catch(() => ({
       version: undefined,
     }));
-
     const sock = makeWASocket({
-      ...waSocketConfig(waVersion, { qrTimeout: 20000 }),
-      auth: state,
+      ...waSocketConfig(waVersion, { qrTimeout: WA_QR_TTL_MS }),
+      auth: authState,
       logger: pino({ level: "debug", name: "baileys-qr" }) as any,
     });
+    pairing.sock = sock;
+    pairing.latestQR = null;
+    pairing.qrExpiresAt = null;
+    pairing.sockAlive = true;
 
-    const pairing: PairingState = { sock, latestQR: null, code: null, codeExpiresAt: null, connected: false, paired: false, phone: "", method: "qr" };
-    pairingSessions.set(userId, pairing);
     waTrace(userId, "qr_socket_created");
 
     sock.ev.on("creds.update", async (credsPayload: any) => {
       try {
-        await saveCreds(credsPayload);
+        await auth.saveCreds(credsPayload);
+        // pair-success lands `creds.me.id` BEFORE `isNewLogin` is emitted. Flip
+        // paired immediately so a countdown-zero renewal can never race an
+        // in-flight authorization (renewPairingQR skips paired sessions).
+        if (credsPayload?.me?.id && !pairing.paired) {
+          pairing.paired = true;
+          waTrace(userId, "qr_creds_me_id");
+        }
         waTrace(userId, "qr_creds_saved");
       } catch (e) {
         console.error(`[wa-auth] qr creds.save FAILED userId=${userId}`, e);
@@ -763,8 +834,12 @@ export class WhatsAppClientManager {
         });
 
         if (update.qr) {
+          // QR expiry never closes the socket — Baileys re-emits a fresh QR on
+          // this same socket. Just record it (and its absolute expiry) so the
+          // frontend countdown is always backend-driven.
           pairing.latestQR = update.qr;
-          waTrace(userId, "qr_received");
+          pairing.qrExpiresAt = Date.now() + WA_QR_TTL_MS;
+          waTrace(userId, "qr_received", { ttlMs: WA_QR_TTL_MS });
         }
 
         if (update.isNewLogin) {
@@ -772,7 +847,7 @@ export class WhatsAppClientManager {
             pairing.paired = true;
             waTrace(userId, "qr_phone_authorized");
             try {
-              await flush();
+              await auth.flush();
               waTrace(userId, "qr_creds_flushed");
             } catch (e) {
               console.error(`[wa-auth] qr flush FAILED userId=${userId}`, e);
@@ -784,6 +859,7 @@ export class WhatsAppClientManager {
           waTrace(userId, "qr_closed", { statusCode: code, paired: pairing.paired, connected: pairing.connected });
           activeSockets.delete(userId);
           socketOpen.delete(userId);
+          pairing.sockAlive = false;
           if (pairing.paired) {
             waTrace(userId, "qr_validating_session");
             setTimeout(() => {
@@ -791,13 +867,22 @@ export class WhatsAppClientManager {
                 .then(() => waTrace(userId, "qr_reconnected"))
                 .catch((e) => console.error(`[wa-auth] qr reconnect FAILED userId=${userId}`, e));
             }, 1000);
-          } else {
-            // Failed before authorization — never created a usable session.
+            return;
+          }
+          // Pre-auth close. Only a genuine 401 (phone revoked) destroys; any
+          // transient close keeps the pairing + DB session so the user can
+          // renew without re-linking.
+          const action = decidePairingClose(code, pairing.paired);
+          if (action === "teardown_session") {
+            waTrace(userId, "qr_teardown_logged_out", { statusCode: code });
             pairingSessions.delete(userId);
-            try {
-              const session = await sessionsRepo.getSession(userId);
-              if (!(session?.creds as any)?.me?.id) await sessionsRepo.deleteSession(userId);
-            } catch {}
+            try { await sessionsRepo.deleteSession(userId); } catch {}
+            try { await disconnectConnection(userId, "whatsapp"); } catch (e) {
+              console.error("Failed to delete connection on QR logout:", e);
+            }
+          } else {
+            // keep — transient close preserves the pairing for renewal.
+            waTrace(userId, "qr_kept_on_transient_close", { statusCode: code, action });
           }
         }
       } catch (e) {
@@ -805,12 +890,19 @@ export class WhatsAppClientManager {
       }
     });
 
-    const result = await new Promise<{ qr: string | null; error: Error | null }>((resolve) => {
+    return sock;
+  }
+
+  /** Resolves with the first QR emitted on a freshly-built QR socket. */
+  private static waitForFirstQR(userId: string, sock: any, pairing: PairingState): Promise<{ qr: string | null; error: Error | null }> {
+    return new Promise((resolve) => {
       const timeout = setTimeout(() => resolve({ qr: null, error: new Error("QR code timed out") }), 100000);
       const onUpdate = (u: any) => {
         if (u.qr) {
           clearTimeout(timeout);
           sock.ev.off("connection.update", onUpdate);
+          pairing.latestQR = u.qr;
+          pairing.qrExpiresAt = Date.now() + WA_QR_TTL_MS;
           resolve({ qr: u.qr, error: null });
         } else if (u.connection === "open") {
           clearTimeout(timeout);
@@ -824,30 +916,113 @@ export class WhatsAppClientManager {
       };
       sock.ev.on("connection.update", onUpdate);
     });
+  }
 
+  /**
+   * Starts a QR-based Baileys pairing session and returns the first QR payload.
+   * DESTRUCTIVE: wipes any previous pairing/socket/session. Only call this for
+   * a genuine fresh link, not for renewal.
+   */
+  public static async startPairingQR(userId: string): Promise<{ qr: string; expiresAt: number }> {
+    const cleanPairing = () => {
+      const existing = pairingSessions.get(userId);
+      if (existing) {
+        try { existing.sock.end(undefined); } catch {}
+        pairingSessions.delete(userId);
+      }
+      if (activeSockets.has(userId)) {
+        try { activeSockets.get(userId).end(undefined); } catch {}
+        activeSockets.delete(userId);
+        socketOpen.delete(userId);
+      }
+    };
+    cleanPairing();
+
+    await sessionsRepo.deleteSession(userId);
+    const { state, saveCreds, flush } = await useDBAuthState(userId);
+
+    const pairing: PairingState = { sock: null as any, latestQR: null, qrExpiresAt: null, code: null, codeExpiresAt: null, connected: false, paired: false, sockAlive: true, phone: "", method: "qr" };
+    pairingSessions.set(userId, pairing);
+
+    const sock = await WhatsAppClientManager.buildQRSocket(userId, { saveCreds, flush }, pairing, state);
+    waTrace(userId, "qr_socket_created_start");
+
+    const result = await WhatsAppClientManager.waitForFirstQR(userId, sock, pairing);
     if (result.error) throw result.error;
     if (!result.qr) {
       // Connection opened without QR (already authenticated via creds)
-      return { qr: "" };
+      return { qr: "", expiresAt: Date.now() + WA_QR_TTL_MS };
     }
-    return { qr: result.qr };
+    return { qr: result.qr, expiresAt: pairing.qrExpiresAt || Date.now() + WA_QR_TTL_MS };
+  }
+
+  /**
+   * Non-destructive QR renewal. When the countdown hits zero (or the socket was
+   * transiently closed pre-auth), regenerate a fresh QR WITHOUT tearing down:
+   *  - the same pairing session,
+   *  - the DB session / creds,
+   *  - listeners (the old socket is ended, a fresh one is wired identically).
+   * The frontend never needs to refresh the page.
+   */
+  public static async renewPairingQR(userId: string): Promise<{ qr: string; expiresAt: number }> {
+    const existing = pairingSessions.get(userId);
+    const hasPairing = !!existing;
+    const action = decidePairingRenewal(
+      hasPairing,
+      existing?.method === "qr",
+      existing?.paired ?? false,
+      existing?.connected ?? false,
+      existing?.sockAlive ?? false,
+    );
+
+    // No active pairing at all — a genuine first link.
+    if (action === "start_fresh") {
+      return WhatsAppClientManager.startPairingQR(userId);
+    }
+
+    // already verified / still on a live socket → keep current QR + expiry.
+    // A live socket re-emits fresh QRs itself; a scan may be mid-authorization.
+    if (action === "keep_current") {
+      return {
+        qr: existing?.latestQR || "",
+        expiresAt: existing?.qrExpiresAt || Date.now() + WA_QR_TTL_MS,
+      };
+    }
+
+    // Socket is dead (transient close) but pairing + DB session are preserved.
+    // Rebuild only the socket, keeping the same pairing session + auth state.
+    const { state, saveCreds, flush } = await useDBAuthState(userId);
+    try { existing!.sock.end(undefined); } catch {}
+    pairingSessions.set(userId, existing!);
+
+    const sock = await WhatsAppClientManager.buildQRSocket(userId, { saveCreds, flush }, existing!, state);
+    const result = await WhatsAppClientManager.waitForFirstQR(userId, sock, existing!);
+    if (result.error) throw result.error;
+    if (!result.qr) {
+      return { qr: "", expiresAt: Date.now() + WA_QR_TTL_MS };
+    }
+    return { qr: result.qr, expiresAt: existing!.qrExpiresAt || Date.now() + WA_QR_TTL_MS };
   }
 
   /**
    * Current QR string + connection status. Returns null if no QR session active.
    */
-  public static getPairingQR(userId: string): { qr?: string; connected: boolean } | null {
+  public static getPairingQR(userId: string): { qr?: string; expiresAt?: number; connected: boolean } | null {
     const pairing = pairingSessions.get(userId);
     if (!pairing || pairing.method !== "qr") return null;
     if (pairing.connected) return { connected: true };
-    return { qr: pairing.latestQR || undefined, connected: false };
+    if (pairing.latestQR) {
+      return { qr: pairing.latestQR, expiresAt: pairing.qrExpiresAt || undefined, connected: false };
+    }
+    return { connected: false };
   }
 
   /**
-   * Refresh QR pairing — destroys current and starts fresh.
+   * Refresh QR pairing — NON-DESTRUCTIVE renewal. Keeps the pairing session,
+   * auth state and DB session; only the socket + QR are regenerated.
    */
-  public static async refreshPairingQR(userId: string): Promise<{ qr: string }> {
-    return WhatsAppClientManager.startPairingQR(userId);
+  public static async refreshPairingQR(userId: string): Promise<{ qr: string; expiresAt: number }> {
+    return WhatsAppClientManager.renewPairingQR(userId);
   }
 
   /**

@@ -99,6 +99,28 @@ export class NotificationHistoryRepository {
     return { success: true, id: data.id };
   }
 
+  async claimForProcessing(id: string): Promise<boolean> {
+    const { data, error } = await this.db.database
+      .from("notification_history")
+      .update({ status: "processing" })
+      .eq("id", id)
+      .in("status", ["queued", "retrying"])
+      .select("id");
+    if (error) {
+      throw new Error(`Failed to claim notification ${id}: ${error.message}`);
+    }
+    return (data ?? []).length > 0;
+  }
+
+  /** Release a claim so a later tick can retry (the caller's trigger failed). */
+  async releaseForProcessing(id: string): Promise<void> {
+    try {
+      await this.db.database.from("notification_history").update({ status: "queued" }).eq("id", id);
+    } catch (error) {
+      console.error(`Failed to release claim for notification ${id}:`, error);
+    }
+  }
+
   async updateStatus(
     id: string,
     status: "sent" | "delivered" | "failed" | "cancelled" | "processing" | "retrying" | "read" | "acknowledged",

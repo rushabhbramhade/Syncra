@@ -42,14 +42,18 @@ export const sendNotification = task({
       throw new Error(`No ${providerId} connection for user`);
     }
 
-    const historyRecord = await history.insert({
+    // When dispatched from the process-queue cron the idempotencyKey is the
+    // source notification_history row id. Transition that row instead of
+    // inserting a copy, so it can never be re-fired by findDueForProcessing.
+    const sourceId = payload.idempotencyKey;
+    const historyId = sourceId ?? (await history.insert({
       user_id: payload.userId,
       notification_type: payload.notificationType,
       provider: providerId,
       title: payload.title,
       message: payload.body,
       status: "queued",
-    });
+    })).id;
 
     const result = await provider.send(recipientId, {
       title: payload.title,
@@ -57,9 +61,9 @@ export const sendNotification = task({
       metadata: { type: payload.notificationType },
     });
 
-    if (historyRecord.id) {
+    if (historyId) {
       await history.updateStatus(
-        historyRecord.id,
+        historyId,
         result.success ? "sent" : "failed",
         result.error,
         result.providerResponse as Record<string, unknown>
@@ -72,13 +76,13 @@ export const sendNotification = task({
       title: payload.title,
       body: payload.body,
       provider: providerId,
-      external_history_id: historyRecord.id,
+      external_history_id: historyId,
     });
 
     if (!result.success) {
       throw new Error(result.error || "Failed to send notification");
     }
 
-    return { success: true, historyId: historyRecord.id };
+    return { success: true, historyId };
   },
 });

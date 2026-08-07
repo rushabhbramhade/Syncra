@@ -93,6 +93,7 @@ export default function IntegrationsPage() {
   const [showDiscordConnectModal, setShowDiscordConnectModal] = useState(false);
   const [showWhatsAppConnectModal, setShowWhatsAppConnectModal] = useState(false);
   const [whatsappQR, setWhatsAppQR] = useState<string | null>(null);
+  const [whatsappQrExpiresAt, setWhatsAppQrExpiresAt] = useState<number | null>(null);
   const [whatsappCode, setWhatsappCode] = useState<string | null>(null);
   const [isWhatsAppLoading, setIsWhatsAppLoading] = useState(false);
   const [whatsappError, setWhatsAppError] = useState<string | null>(null);
@@ -114,12 +115,14 @@ export default function IntegrationsPage() {
     setIsWhatsAppLoading(true);
     setWhatsAppError(null);
     setWhatsAppQR(null);
+    setWhatsAppQrExpiresAt(null);
     setWhatsAppConnected(false);
     setWhatsappMethod("qr");
     try {
       const res = await startWhatsAppQRAction(user.id);
       if (res.success && res.qr) {
         setWhatsAppQR(res.qr);
+        if (res.expiresAt) setWhatsAppQrExpiresAt(res.expiresAt);
       } else {
         setWhatsAppError(res.error || "Failed to start WhatsApp pairing.");
       }
@@ -138,6 +141,7 @@ export default function IntegrationsPage() {
       const res = await refreshWhatsAppQRAction(user.id);
       if (res.success && res.qr) {
         setWhatsAppQR(res.qr);
+        if (res.expiresAt) setWhatsAppQrExpiresAt(res.expiresAt);
       } else {
         setWhatsAppError(res.error || "Failed to refresh QR code.");
       }
@@ -194,6 +198,7 @@ export default function IntegrationsPage() {
     if (!user) return;
     setWhatsAppConnected(false);
     setWhatsAppQR(null);
+    setWhatsAppQrExpiresAt(null);
     setWhatsappCode(null);
     setWhatsappPhone("");
     try {
@@ -220,6 +225,9 @@ export default function IntegrationsPage() {
             setWhatsAppConnected(true);
             setSuccessMessage("WhatsApp connected successfully!");
             refresh();
+          } else if (res.success && res.status === "pending" && res.qr && res.qr !== whatsappQR) {
+            setWhatsAppQR(res.qr);
+            if (res.expiresAt) setWhatsAppQrExpiresAt(res.expiresAt);
           }
         } else {
           const res = await getWhatsAppPairingStatusAction(user.id);
@@ -598,6 +606,7 @@ export default function IntegrationsPage() {
         isOpen={showWhatsAppConnectModal}
         onClose={() => { handleWhatsAppCancel(); setShowWhatsAppConnectModal(false); }}
         qr={whatsappQR}
+        qrExpiresAt={whatsappQrExpiresAt}
         code={whatsappCode}
         isLoading={isWhatsAppLoading}
         error={whatsappError}
