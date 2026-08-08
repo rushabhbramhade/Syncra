@@ -60,12 +60,12 @@ export function computeQuality(h: ProviderHealth): { score: number; label: strin
  * Resolve the true activity time (message sent / event start) of a briefing item
  * by looking up its sourceId within that item's own platform's entities — never
  * across platforms, so same-id collisions between providers can't cross-match.
- * Falls back to "now" when the source is untraceable.
+ * Returns null when the source is untraceable — callers must handle null.
  */
 export function effectiveActivityTimestamp(
   item: { platform?: string; sourceId?: string },
   contextEntities: Record<string, Array<{ providerId?: unknown; sentAt?: string | null; startsAt?: string | null }>>,
-): string {
+): string | null {
   if (item.sourceId) {
     const entities = item.platform ? contextEntities[item.platform] : undefined;
     const match = (entities || []).find(
@@ -74,7 +74,7 @@ export function effectiveActivityTimestamp(
     const ts = match ? match.sentAt ?? match.startsAt : undefined;
     if (ts) return ts;
   }
-  return new Date().toISOString();
+  return null;
 }
 
 export function countItems(value: unknown): number {
@@ -161,7 +161,9 @@ function normalizeMessages(
 
 function normalizeGmail(integrationId: string, raw: unknown): NormalizedEntity[] {
   return normalizeMessages("gmail", integrationId, raw, (e) => {
-    const subject = e.subject || "(No Subject)";
+    // Only carry a real subject through metadata. An absent/whitespace subject
+    // stays empty so downstream title fallback can never surface "No Subject".
+    const subject = typeof e.subject === "string" ? e.subject.trim() : "";
     const snippet = e.snippet || "";
     return {
       providerId: String(e.id),
@@ -172,7 +174,7 @@ function normalizeGmail(integrationId: string, raw: unknown): NormalizedEntity[]
         ? (() => { try { const d = new Date(String(e.rawDate)); return !isNaN(d.getTime()) ? d.toISOString() : new Date().toISOString(); } catch { return new Date().toISOString(); } })()
         : new Date().toISOString(),
       direction: "inbound",
-      metadata: { subject, from: e.from, to: e.to, unread: e.unread !== false },
+      metadata: { subject: subject || undefined, from: e.from, to: e.to, unread: e.unread !== false },
     };
   });
 }
@@ -181,12 +183,23 @@ function normalizeSlack(integrationId: string, raw: unknown): NormalizedEntity[]
   return normalizeMessages("slack", integrationId, raw, (m) => {
     const text = typeof m.text === "string" ? m.text : "";
     if (!text) return null;
+    let providerId: string;
+    if (m.ts) {
+      providerId = String(m.ts);
+    } else if (m.client_msg_id) {
+      providerId = String(m.client_msg_id);
+    } else {
+      const channel = m.channel || "";
+      const sender = m.user || "";
+      const ts = m.thread_ts || "";
+      providerId = hash("slack", channel, sender, text, ts);
+    }
     return {
-      providerId: String(m.ts ?? m.client_msg_id ?? `${Date.now()}_${Math.random()}`),
+      providerId,
       channelId: m.channel || null,
       bodyText: text,
-      contentHash: hash("slack", String(m.ts), text),
-      sentAt: m.ts ? new Date(Number(m.ts) * 1000).toISOString() : new Date().toISOString(),
+      contentHash: hash("slack", providerId, text),
+      sentAt: m.ts ? new Date(Number(m.ts) * 1000).toISOString() : (m.thread_ts ? new Date(Number(m.thread_ts) * 1000).toISOString() : new Date().toISOString()),
       direction: "inbound",
       metadata: { user: m.user || null },
     };
@@ -213,14 +226,23 @@ function normalizeTelegram(integrationId: string, raw: unknown): NormalizedEntit
     const text = typeof m.text === "string" ? m.text : "";
     if (!text) return null;
     const from = (m.from as Record<string, unknown>) || {};
+    let providerId: string;
+    if (m.message_id != null) {
+      providerId = String(m.message_id);
+    } else {
+      const chatId = m.chat?.id != null ? String(m.chat.id) : "";
+      const sender = String(from.username || from.first_name || "");
+      const date = m.date ? String(m.date) : "";
+      providerId = hash("telegram", chatId, sender, text, date);
+    }
     return {
-      providerId: `msg_${m.message_id ?? Date.now()}`,
+      providerId,
       channelId: m.chat?.id != null ? String(m.chat.id) : null,
       bodyText: text,
-      contentHash: hash("telegram", String(m.message_id), text),
+      contentHash: hash("telegram", providerId, text),
       sentAt: m.date ? new Date(Number(m.date) * 1000).toISOString() : new Date().toISOString(),
       direction: "inbound",
-      metadata: { from: (from.username || from.first_name) ?? null },
+      metadata: { from: String(from.username || from.first_name || "") || null },
     };
   });
 }
@@ -271,11 +293,13 @@ function normalizeWhatsApp(integrationId: string, raw: unknown): NormalizedEntit
 }
 
 function normalizeGitHub(integrationId: string, raw: unknown): NormalizedEntity[] {
-  // Handle both { issues, notifications } shape (briefing service) and flat array (single-action sync).
+  // Handle both { issues, notifications, activity } shape (briefing service) and flat array (single-action sync).
   const isArray = Array.isArray(raw);
+  const commitShaped = isArray && ((raw as Raw[]).every((i) => i?.sha != null && i?.repo != null));
   const r = isArray ? {} : ((raw as Record<string, unknown>) || {});
   const issues: Raw[] = isArray ? [] : (Array.isArray(r.issues) ? r.issues as Raw[] : []);
-  const notifications: Raw[] = isArray ? raw as Raw[] : (Array.isArray(r.notifications) ? r.notifications as Raw[] : []);
+  const notifications: Raw[] = !commitShaped && isArray ? raw as Raw[] : (Array.isArray(r.notifications) ? r.notifications as Raw[] : []);
+  const activity: Raw[] = commitShaped ? raw as Raw[] : (Array.isArray(r.activity) ? r.activity as Raw[] : []);
   const out: NormalizedEntity[] = [];
   for (const i of issues) {
     out.push({
@@ -306,6 +330,29 @@ function normalizeGitHub(integrationId: string, raw: unknown): NormalizedEntity[
       read: n.unread === false,
       url: n.subject?.url || n.html_url || null,
       metadata: { repo: n.repository?.full_name || null, reason: n.reason || null },
+    } satisfies UnifiedNotification);
+  }
+  // Real repository activity (commits pushed by the user). These are the items
+  // that prove GitHub "no recent activity" was wrong: a person who pushes code
+  // but has no open issues still has activity worth briefing.
+  for (const c of activity) {
+    const sha = String(c.sha || c.id || Date.now());
+    const message = String(c.message || "").split("\n")[0].trim() || "New commit";
+    out.push({
+      entityKind: "notification",
+      integrationId,
+      providerId: `commit_${sha}`,
+      providerNotificationId: `commit_${sha}`,
+      kind: "commit",
+      title: message.slice(0, 200),
+      read: false,
+      url: c.url || null,
+      metadata: {
+        repo: c.repo ?? c.repository?.full_name ?? null,
+        sha: sha.slice(0, 7),
+        author: c.author ?? null,
+        pushedAt: c.date ?? null,
+      },
     } satisfies UnifiedNotification);
   }
   return out;
@@ -401,16 +448,30 @@ export function aiShapeForProvider(providerId: string, entities: NormalizedEntit
     case "github": {
       const issues: Record<string, unknown>[] = [];
       const notifications: Record<string, unknown>[] = [];
+      const activity: Record<string, unknown>[] = [];
       for (const e of entities) {
         if (e.entityKind === "task") {
           const t = e as UnifiedTask;
           issues.push({ id: t.providerId, title: t.title, state: t.status, url: t.url, repo: t.metadata?.repo });
         } else if (e.entityKind === "notification") {
           const n = e as UnifiedNotification;
-          notifications.push({ id: n.providerId, title: n.title, kind: n.kind, url: n.url, read: n.read });
+          if (n.kind === "commit") {
+            activity.push({
+              id: n.providerId,
+              type: "commit",
+              title: n.title,
+              repo: n.metadata?.repo,
+              sha: n.metadata?.sha,
+              author: n.metadata?.author,
+              date: n.metadata?.pushedAt,
+              url: n.url,
+            });
+          } else {
+            notifications.push({ id: n.providerId, title: n.title, kind: n.kind, url: n.url, read: n.read });
+          }
         }
       }
-      return { issues, notifications };
+      return { issues, notifications, activity };
     }
     case "linkedin":
       return entities.map((e) => {
@@ -515,6 +576,13 @@ function coverageCategory(entityKind: string, providerId: string): string {
   return "messages";
 }
 
+/** Trim a candidate title; whitespace-only values are treated as empty. */
+function firstNonEmpty(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 /**
  * Backend-enforced provider coverage. The AI may summarize, prioritize and
  * group, but the BACKEND guarantees every provider with real records is
@@ -524,21 +592,28 @@ function coverageCategory(entityKind: string, providerId: string): string {
 export function buildCoverageItems(providerId: string, entities: NormalizedEntity[]): CoverageItem[] {
   const out: CoverageItem[] = [];
   for (const e of entities.slice(0, 3)) {
-    const rec = e as NormalizedEntity & { bodyText?: string; metadata?: Record<string, unknown>; providerId?: string };
+    const rec = e as NormalizedEntity & { bodyText?: string; metadata?: Record<string, unknown>; providerId?: string; title?: string };
     const meta = rec.metadata || {};
     const body = typeof rec.bodyText === "string" ? rec.bodyText.trim() : "";
-    const subject = meta.subject ?? meta.title;
-    const title = subject
-      ? String(subject)
-      : (body.split("\n")[0] || `${providerId} update`).slice(0, 160);
+    // Prefer verified provider metadata/title; never fabricate a meaningful
+    // title from missing content. Whitespace-only values count as empty, and
+    // the fallback is a deterministic neutral label — never "<provider> update".
+    const realTitle =
+      firstNonEmpty(meta.subject) ??
+      firstNonEmpty(meta.title) ??
+      firstNonEmpty(rec.title) ??
+      firstNonEmpty(body.split("\n")[0]);
+    const title = realTitle ?? "Untitled update";
     const category = coverageCategory(e.entityKind, providerId);
     out.push({
       platform: providerId,
       category,
-      title,
+      title: title.slice(0, 160),
       priority: "normal",
       shortSummary: body.slice(0, 140) || title,
-      originalContent: body || title,
+      // Real content, then the real title (e.g. a commit message), never the
+      // neutral fallback — originalContent stays truthful.
+      originalContent: body || realTitle || "",
       sourceId: rec.providerId || undefined,
       correlationKey: meta.threadId ? String(meta.threadId) : undefined,
       from: category === "email" ? String(meta.from || "") || undefined : undefined,

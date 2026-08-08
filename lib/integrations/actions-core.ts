@@ -4,6 +4,7 @@ import { createAdminDb } from "@/lib/db";
 import { IntegrationEvents } from "@/lib/integration-events";
 import { logger, getCorrelationId } from "@/lib/logger";
 import { ToolPermissionsRepository } from "@/lib/repositories/tool-permissions-repository";
+import { isSyncEvidenceAction, countResultItems, syncEvidenceMessage } from "@/lib/integrations/sync-evidence";
 
 export function getRepo(): IntegrationsRepository {
   return new IntegrationsRepository(createAdminDb());
@@ -174,6 +175,19 @@ export async function executeMCPAction(userId: string, providerId: string, actio
         repo.updateLastSync(userId, providerId);
         const duration = Date.now() - startTime;
         log.info(`MCP action completed in ${duration}ms`, { duration, status: "success", attempt: attempt || undefined });
+        // Real data-fetch evidence → integration_sync_logs. Written once at the
+        // single success point (never per retry attempt), so the Integration
+        // Health card shows precisely this fetch outcome.
+        if (isSyncEvidenceAction(actionName)) {
+          await repo.addSyncLog({
+            user_id: userId,
+            provider: providerId,
+            status: "success",
+            message: syncEvidenceMessage({ actionName, status: "success", itemCount: countResultItems(result) }),
+            metadata: { action: actionName, itemCount: countResultItems(result), source: "briefing" },
+            duration_ms: duration,
+          });
+        }
         return { status: "success", result };
       } catch (err: unknown) {
         lastErr = err;
@@ -190,6 +204,16 @@ export async function executeMCPAction(userId: string, providerId: string, actio
     const errorObj = lastErr as { message?: string };
     const duration = Date.now() - startTime;
     log.error(`MCP action failed after ${duration}ms`, { duration, error: errorObj.message });
+    if (isSyncEvidenceAction(actionName)) {
+      await repo.addSyncLog({
+        user_id: userId,
+        provider: providerId,
+        status: "error",
+        message: syncEvidenceMessage({ actionName, status: "error", error: errorObj.message }),
+        metadata: { action: actionName, error: errorObj.message || null },
+        duration_ms: duration,
+      });
+    }
     return { status: "error", error: { code: -32003, message: errorObj.message || `Failed to execute action ${actionName}.` } };
   } catch (err: unknown) {
     const errorObj = err as { message?: string };
@@ -304,7 +328,7 @@ const DEFAULT_SYNC_TOOL: Record<string, string> = {
   whatsapp: "whatsapp_fetch_messages",
   telegram: "telegram_fetch_messages",
   discord: "discord_fetch_recent_messages",
-  github: "github_get_notifications",
+  github: "github_get_recent_activity",
   linkedin: "linkedin_get_profile",
 };
 
@@ -314,6 +338,6 @@ const DEFAULT_SYNC_ARGS: Record<string, Record<string, unknown>> = {
   whatsapp: { limit: 10 },
   telegram: { limit: 5 },
   discord: { limit: 3 },
-  github: {},
+  github: { limit: 24 },
   linkedin: {},
 };

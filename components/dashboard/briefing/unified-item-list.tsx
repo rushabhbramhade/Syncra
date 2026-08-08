@@ -7,7 +7,7 @@ import { CorrelationLink } from "./correlation-link";
 import {
   Search, Inbox, ChevronRight, Mail, MessageCircle, AlertCircle, Bell,
   ThumbsUp, MessageSquare, ExternalLink, Clock, CheckCircle,
-  Zap, Filter
+  Filter
 } from "lucide-react";
 
 interface UnifiedItemListProps {
@@ -29,6 +29,9 @@ interface BriefingItemMeta {
   signals?: unknown[];
   whyClassified?: unknown;
   correlation?: { relatedItemId?: string; text?: string; platform?: string };
+  timestamp_source?: "activity" | "fallback_generated";
+  mentions?: unknown;
+  isMention?: unknown;
 }
 
 type SmartFilter =
@@ -56,7 +59,8 @@ const SMART_FILTERS: { key: SmartFilter; label: string }[] = [
 
 const PRIORITY_RANK: Record<string, number> = { high: 0, normal: 1, low: 2 };
 
-export function formatWaiting(timestamp: string): string {
+export function formatWaiting(timestamp: string, timestampSource?: "activity" | "fallback_generated"): string {
+  if (timestampSource === "fallback_generated") return "generated";
   const ms = Date.now() - new Date(timestamp).getTime();
   if (ms < 0) return "just now";
   const mins = Math.floor(ms / 60000);
@@ -112,7 +116,6 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
   onItemClick, onMarkDone, isDataLoading = false,
 }: UnifiedItemListProps) {
   const [smartFilter, setSmartFilter] = useState<SmartFilter>("all");
-  const [focusMode, setFocusMode] = useState(false);
 
   const filteredItems = useMemo(() => {
     return items.filter(item => {
@@ -125,12 +128,14 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
       const cat = item.category.toLowerCase();
       const priority = item.priority.toLowerCase();
 
-      const meta = (item.metadata || {}) as Record<string, unknown>;
+      const meta = (item.metadata || {}) as BriefingItemMeta;
       const isMention =
         cat === "mentions" ||
         Boolean(meta.mentions) ||
         Boolean(meta.isMention) ||
         String(meta.title || "").toLowerCase().includes("@");
+
+      const hasActivityTimestamp = meta.timestamp_source === "activity";
 
       if (smartFilter === "high" && priority !== "high") return false;
       if (smartFilter === "medium" && priority !== "normal" && priority !== "medium") return false;
@@ -138,12 +143,8 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
       if (smartFilter === "mentions" && !isMention) return false;
       if (smartFilter === "needs_reply" && !["email", "messages", "mentions", "followups", "follow-ups", "follow_ups"].includes(cat)) return false;
       if (smartFilter === "unread" && item.status !== "unread") return false;
-      if (smartFilter === "today" && !isToday(item.timestamp)) return false;
-      if (smartFilter === "this_week" && !isThisWeek(item.timestamp)) return false;
-
-      if (focusMode && priority !== "high" && smartFilter !== "high") {
-        if (!["email", "messages", "mentions"].includes(cat)) return false;
-      }
+      if (smartFilter === "today" && (!hasActivityTimestamp || !isToday(item.timestamp))) return false;
+      if (smartFilter === "this_week" && (!hasActivityTimestamp || !isThisWeek(item.timestamp))) return false;
 
       if (searchQuery.trim()) {
         const meta = item.metadata || {};
@@ -154,7 +155,7 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
       }
       return true;
     });
-  }, [items, activeTab, smartFilter, focusMode, searchQuery]);
+  }, [items, activeTab, smartFilter, searchQuery]);
 
   const groupedByPriority = useMemo(() => {
     const groups: Record<string, BriefingItemRecord[]> = { high: [], normal: [], low: [] };
@@ -177,7 +178,7 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
 
   return (
     <div className="space-y-4">
-      {/* Smart Filter Chips + Focus Mode */}
+      {/* Smart Filter Chips */}
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="flex items-center gap-1 text-[11px] font-black text-text-slate uppercase tracking-wider mr-1">
@@ -197,17 +198,6 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
               {f.label}
             </button>
           ))}
-          <button
-            onClick={() => setFocusMode(o => !o)}
-            className={`text-[11px] font-black px-3 py-1.5 rounded-lg uppercase tracking-wider border transition-colors flex items-center gap-1.5 ${
-              focusMode
-                ? "bg-error/10 text-error border-error/30"
-                : "bg-background-mist text-text-slate border-border-mist hover:text-secondary"
-            }`}
-          >
-            <Zap className="w-3.5 h-3.5" />
-            Focus Mode
-          </button>
         </div>
 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -319,7 +309,7 @@ const ItemRow = React.memo(function ItemRow({ item, onItemClick, onMarkDone }: {
             </span>
             <span className="text-[10px] font-medium text-text-slate flex items-center gap-1">
               <Clock className="w-3 h-3" />
-              Waiting {formatWaiting(item.timestamp)}
+              Waiting {formatWaiting(item.timestamp, meta.timestamp_source)}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 mt-2">

@@ -69,13 +69,13 @@ export class WhatsAppProvider implements IntegrationProvider {
     switch (toolName) {
       case "whatsapp_fetch_messages": {
         const limit = (args.limit as number) || 10;
-        const messages = WhatsAppClientManager.getMessages(userId);
+        const messages = await WhatsAppClientManager.getMessagesDurable(userId, undefined, limit);
         return messages.slice(0, limit);
       }
       case "whatsapp_read_chat": {
         const limit = (args.limit as number) || 15;
         const chatId = args.chatId as string;
-        const messages = WhatsAppClientManager.getMessages(userId, chatId);
+        const messages = await WhatsAppClientManager.getMessagesDurable(userId, chatId, limit);
         return messages.slice(0, limit);
       }
       case "whatsapp_send_message": {
@@ -86,7 +86,7 @@ export class WhatsAppProvider implements IntegrationProvider {
       }
       case "whatsapp_search_chats": {
         const query = (args.query as string).toLowerCase();
-        const messages = WhatsAppClientManager.getMessages(userId);
+        const messages = await WhatsAppClientManager.getMessagesDurable(userId, undefined, 500);
         const filtered = messages.filter(m => 
           m.message.toLowerCase().includes(query) || 
           m.fromName.toLowerCase().includes(query)
@@ -95,7 +95,7 @@ export class WhatsAppProvider implements IntegrationProvider {
       }
       case "whatsapp_summarize_chat": {
         const chatId = args.chatId as string;
-        const messages = WhatsAppClientManager.getMessages(userId, chatId);
+        const messages = await WhatsAppClientManager.getMessagesDurable(userId, chatId, 30);
         if (messages.length === 0) {
           return { summary: "No message history available to summarize." };
         }
@@ -132,7 +132,7 @@ export class WhatsAppProvider implements IntegrationProvider {
       case "whatsapp_fetch_group_messages": {
         const limit = (args.limit as number) || 10;
         const groupId = args.groupId as string | undefined;
-        const messages = WhatsAppClientManager.getMessages(userId, groupId);
+        const messages = await WhatsAppClientManager.getMessagesDurable(userId, groupId, limit);
         return messages.slice(0, limit);
       }
       case "whatsapp_send_group_message": {

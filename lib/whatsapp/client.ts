@@ -269,6 +269,63 @@ function cacheMessage(userId: string, message: any): "inserted" | "skipped" {
   return wasNew ? "inserted" : "skipped";
 }
 
+// ── Durable persistence to the unified store ────────────────────────────────
+// The JSON cache is a performance layer that only survives as long as a single
+// server process. Messages are ALSO persisted to unified_messages (debounced)
+// so they reach the briefing pipeline and survive restarts/reconnects. Dedupe
+// is by provider_message_id (message key) so re-upserts are harmless.
+const persistQueues = new Map<string, any[]>();              // userId -> pending messages
+const persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const persistIntegrationIds = new Map<string, string>();     // userId -> integration row id
+
+function cachePersist(userId: string, message: any) {
+  const queue = persistQueues.get(userId) || [];
+  queue.push(message);
+  persistQueues.set(userId, queue);
+  const existing = persistTimers.get(userId);
+  if (existing) clearTimeout(existing);
+  persistTimers.set(userId, setTimeout(() => { void flushPersist(userId); }, 1200));
+}
+
+async function flushPersist(userId: string): Promise<void> {
+  persistTimers.delete(userId);
+  const queue = persistQueues.get(userId);
+  persistQueues.delete(userId);
+  if (!queue || queue.length === 0) return;
+  try {
+    let integrationId = persistIntegrationIds.get(userId);
+    if (!integrationId) {
+      const record = await new IntegrationsRepository(createAdminDb()).findByUserAndProvider(userId, "whatsapp");
+      integrationId = record?.id || "";
+    }
+    if (!integrationId) {
+      // Row not written yet (mid-pairing), or integration gone. Hang onto the
+      // messages and retry once the connection row exists (saveConnection is
+      // reached after the initial sync completes) instead of dropping them.
+      const backlog = persistQueues.get(userId) || [];
+      persistQueues.set(userId, [...backlog, ...queue]);
+      const existing = persistTimers.get(userId);
+      if (existing) clearTimeout(existing);
+      persistTimers.set(userId, setTimeout(() => { void flushPersist(userId); }, 2000));
+      return;
+    }
+    persistIntegrationIds.set(userId, integrationId);
+    const { normalizeResult } = await import("@/lib/briefing/pipeline");
+    const { getUnifiedStoreRepo } = await import("@/lib/repositories/unified-store-repository");
+    const entities = normalizeResult("whatsapp", queue, integrationId);
+    if (entities.length > 0) {
+      await getUnifiedStoreRepo().upsertBatch(userId, integrationId, entities);
+    }
+  } catch (err) {
+    console.warn(`[wa-unified] failed to persist messages for ${userId}:`, err);
+  }
+}
+
+/** Flush any in-flight persist queue immediately (used on disconnect/shutdown). */
+export async function flushPendingPersists(userId: string): Promise<void> {
+  await flushPersist(userId);
+}
+
 function recordChat(userId: string, jid?: string) {
   if (!jid) return;
   let set = chatIds.get(userId);
@@ -528,7 +585,7 @@ function attachClientHandlers(sock: any, userId: string) {
         const name = msg.pushName || "WhatsApp User";
         recordChat(userId, from);
 
-        cacheMessage(userId, {
+        const cached = {
           id: msg.key.id,
           from,
           fromName: fromMe ? "Me" : name,
@@ -536,7 +593,11 @@ function attachClientHandlers(sock: any, userId: string) {
           timestamp: new Date(Number(msg.messageTimestamp) * 1000).toISOString(),
           isGroup: from.endsWith("@g.us"),
           senderName: from.endsWith("@g.us") ? name : undefined,
-        });
+        };
+        cacheMessage(userId, cached);
+        // Persist durably to unified_messages so the data survives the
+        // ephemeral per-process cache and reaches the briefing pipeline.
+        cachePersist(userId, cached);
       }
     }
   });
@@ -1069,6 +1130,9 @@ export class WhatsAppClientManager {
 
     await sessionsRepo.deleteSession(userId);
 
+    // Flush any queued durable messages before tearing down.
+    try { await flushPersist(userId); } catch {}
+
     // Clear in-memory cache/state so no stale data reads after logout.
     const store = messageStore.get(userId);
     if (store) store.clear();
@@ -1081,6 +1145,11 @@ export class WhatsAppClientManager {
     const flushTimer = flushTimers.get(userId);
     if (flushTimer) clearTimeout(flushTimer);
     flushTimers.delete(userId);
+    const persistTimer = persistTimers.get(userId);
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimers.delete(userId);
+    persistQueues.delete(userId);
+    persistIntegrationIds.delete(userId);
 
     const cacheDir = path.join(MESSAGE_CACHE_DIR, userId);
     if (fs.existsSync(cacheDir)) {
@@ -1099,6 +1168,44 @@ export class WhatsAppClientManager {
     const store = ensureStore(userId);
     const cached = [...store.values()];
     return chatId ? cached.filter(m => m.from === chatId) : cached;
+  }
+
+  /**
+   * Fetch messages preferring the durable unified store (survives restarts),
+   * falling back to the in-process cache when no DB copies exist yet. This is
+   * what the briefing pipeline should call: a cold server instance that has not
+   * re-restored the Baileys socket still answers with real synchronized data.
+   */
+  public static async getMessagesDurable(userId: string, chatId?: string, limit = 50): Promise<any[]> {
+    try {
+      const { getRecentMessages } = await import("@/lib/repositories/unified-store-repository");
+      let integrationId = persistIntegrationIds.get(userId);
+      if (!integrationId) {
+        const record = await new IntegrationsRepository(createAdminDb()).findByUserAndProvider(userId, "whatsapp");
+        integrationId = record?.id || "";
+        if (integrationId) persistIntegrationIds.set(userId, integrationId);
+      }
+      if (integrationId) {
+        const rows = await getRecentMessages(userId, integrationId, limit * 2);
+        const mapped = rows.map((r: { provider_message_id?: string | null; channel_id?: string | null; body_text?: string | null; sent_at?: string | null; metadata?: unknown }) => {
+          const meta = (r.metadata || {}) as { fromName?: string; isGroup?: boolean; groupName?: string | null };
+          return {
+            id: r.provider_message_id,
+            from: r.channel_id,
+            fromName: meta.fromName || "WhatsApp User",
+            message: r.body_text,
+            timestamp: r.sent_at,
+            isGroup: !!meta.isGroup,
+            senderName: meta.groupName || undefined,
+          };
+        });
+        const scoped = chatId ? mapped.filter((m) => m.from === chatId) : mapped;
+        if (scoped.length > 0) return scoped.slice(0, limit);
+      }
+    } catch (err) {
+      console.warn(`[wa-unified] durable read failed for ${userId}:`, err);
+    }
+    return this.getMessages(userId, chatId).slice(0, limit);
   }
 
   /**

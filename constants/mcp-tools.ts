@@ -750,6 +750,20 @@ export const PLATFORM_MCP_TOOLS: Record<string, MCPTool[]> = {
       inputSchema: { type: "object", properties: {} },
       arguments: [],
     },
+    {
+      name: "github_get_recent_activity",
+      displayName: "Recent Activity",
+      description: "Fetch the user's most recent real development activity — commits pushed to their repositories. Use when issues and notifications are empty to surface actual progress.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max recent commits to return (default: 24)." },
+        },
+      },
+      arguments: [
+        { name: "limit", label: "Limit", type: "number", defaultValue: 24 },
+      ],
+    },
   ],
   linkedin: [
     {

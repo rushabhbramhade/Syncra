@@ -391,9 +391,10 @@ export class BriefingService {
       // Create githubPromise BEFORE awaiting platformTasks so all providers run in parallel.
       const githubPromise = activeIntegrations.includes("github")
         ? (async () => {
-            const [issues, notifications] = await Promise.allSettled([
+            const [issues, notifications, activity] = await Promise.allSettled([
               executeMCPAction(authUserId, "github", "github_list_issues", {}),
               executeMCPAction(authUserId, "github", "github_get_notifications", {}),
+              executeMCPAction(authUserId, "github", "github_get_recent_activity", {}),
             ]);
             const combined: Record<string, unknown> = {};
             let lastError: string | undefined;
@@ -411,6 +412,13 @@ export class BriefingService {
             } else {
               lastError = notifications.reason instanceof Error ? notifications.reason.message : String(notifications.reason);
             }
+            if (activity.status === "fulfilled" && activity.value.status === "success" && activity.value.result != null) {
+              combined.activity = activity.value.result;
+            } else if (activity.status === "fulfilled") {
+              lastError = activity.value.error?.message;
+            } else {
+              lastError = activity.reason instanceof Error ? activity.reason.message : String(activity.reason);
+            }
             if (Object.keys(combined).length > 0) {
               // Partial success: report the error too so a failed sub-request is
               // never hidden behind "no recent activity".
@@ -419,9 +427,9 @@ export class BriefingService {
                 ? { status: "success", result: combined, error: { message: lastError } }
                 : { status: "success", result: combined });
             } else {
-              // Both GitHub requests failed — surface the reason, never pretend
+              // All GitHub requests failed — surface the reason, never pretend
               // "no recent activity".
-              await ingest("github", { status: "error", error: { message: lastError || "GitHub returned no issues or notifications" } });
+              await ingest("github", { status: "error", error: { message: lastError || "GitHub returned no issues, notifications, or activity" } });
             }
           })().catch(e => console.warn("GitHub MCP action failed in briefing sync:", e))
         : Promise.resolve();
@@ -575,7 +583,7 @@ The response must fit this exact JSON structure:
   "health": {
     "overall": (0 to 100 workspace health score),
     "breakdown": [
-      { "name": "Communication | Development | Meetings | Productivity | Response Time | Pending Work", "score": (0 to 100), "reason": "why this score — reference actual data, or mark 'insufficient data' if none" }
+      { "name": "dimension name (e.g. Communication, Development, Meetings, etc. — ONLY include dimensions with real evidence from data)", "score": (0 to 100), "reason": "why this score — MUST reference actual data items; omit dimension entirely if no evidence exists" }
     ],
     "summary": "1-2 sentence health summary"
   },
@@ -629,11 +637,11 @@ Goal parameter of current briefing schedule: "${goal}".
 Connected integrations (the ONLY sources with data available): ${activeIntegrations.join(", ") || "(none)"}.
 Do NOT report any platform as missing, and do NOT emit items for platforms outside this list — they are simply not connected.
 Categories requested: ${selectedCategories.join(", ")}.
-For each platform, provide relevant data: gmail/outlook→emails, slack/whatsapp/telegram/discord→messages, github→issues/PRs/notifications, linkedin→profile/feed, calendar→events, notion→pages, linear→issues.
+For each platform, provide relevant data: gmail/outlook→emails, slack/whatsapp/telegram/discord→messages, github→issues/PRs/notifications/recent commits, linkedin→profile/feed, calendar→events, notion→pages, linear→issues.
 
 CRITICAL: Only report data actually present in <data_context>. Never invent items, summaries, counts, or metrics for any platform or category that has no data. If a requested platform or category returned nothing, omit it entirely (no fabricated placeholders).
 
-ANTI-HALLUCINATION: every priority assignment, health score, insight, relationship, recommendation, goal, timeline entry, and confidence statement must be derivable from the actual items in <data_context>. Never claim something happened that is not in the data. If data for a dimension is absent, set that health breakdown reason to 'insufficient data' and lower the confidence overall score. Never fabricate lastSync timestamps — only set them if present in the item data. Goals must only be things the data actually supports — never invent pending tasks or waiting counts that are not present in the items.`;
+ANTI-HALLUCINATION: every priority assignment, health score, insight, relationship, recommendation, goal, timeline entry, and confidence statement must be derivable from the actual items in <data_context>. Never claim something happened that is not in the data. Health breakdown dimensions MUST ONLY be included when there is real supporting evidence from the data — do not create dimensions for "Communication", "Development", "Meetings", "Productivity", "Response Time", "Pending Work" or any other dimension unless actual data items exist to support them. If no evidence exists for a dimension, omit it entirely (do not include with score 0 or "insufficient data"). Never fabricate lastSync timestamps — only set them if present in the item data. Goals must only be things the data actually supports — never invent pending tasks or waiting counts that are not present in the items.`;
 
       // Phase 9 — balance by importance, not volume. One urgent GitHub issue
       // outweighs 50 routine emails; every provider with data keeps a seat.
@@ -789,17 +797,22 @@ ${buildManifest(healthReport)}`;
       }
 
       const briefingId = briefingRecord.id!;
+      const briefingGeneratedAt = createBriefingPayload.generated_at;
 
       // Map an AI/backfilled item to the real synchronized entity's timestamp
       // by its sourceId (scoped to the item's own platform). Storing the true
       // activity time (message sent / event start) instead of generation time
-      // keeps dashboard "time" labels grounded.
-      const entityTimestamp = (item: AIResponseBriefing["items"][number]): string =>
+      // keeps dashboard "time" labels grounded. Returns null when no trustworthy
+      // activity timestamp exists — caller handles fallback.
+      const entityTimestamp = (item: AIResponseBriefing["items"][number]): string | null =>
         effectiveActivityTimestamp(item, contextEntities);
 
       // 6. Store briefing items with correlation data
       const storedItems = await Promise.all(
         (aiResult.items || []).map(async (item) => {
+          const activityTs = entityTimestamp(item);
+          const timestamp = activityTs ?? briefingGeneratedAt;
+          const timestampSource = activityTs ? "activity" : "fallback_generated";
           return repo.createBriefingItem({
             briefing_id: briefingId,
             platform: item.platform,
@@ -813,12 +826,13 @@ ${buildManifest(healthReport)}`;
               from: item.from || null,
               to: item.to || null,
               coverage_backfilled: backfilledPlatforms.has(item.platform) || null,
+              timestamp_source: timestampSource,
             },
             priority: item.priority || "normal",
             status: "unread",
             notes: null,
             snoozed_until: null,
-            timestamp: entityTimestamp(item),
+            timestamp,
           });
         })
       );

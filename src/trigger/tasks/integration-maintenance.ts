@@ -9,7 +9,7 @@ const SYNC_TOOL: Record<string, string> = {
   whatsapp: "whatsapp_fetch_messages",
   telegram: "telegram_fetch_messages",
   discord: "discord_fetch_recent_messages",
-  github: "github_get_notifications",
+  github: "github_get_recent_activity",
   linkedin: "linkedin_get_profile",
 };
 
@@ -19,11 +19,13 @@ const SYNC_ARGS: Record<string, Record<string, unknown>> = {
   whatsapp: { limit: 10 },
   telegram: { limit: 5 },
   discord: { limit: 3 },
-  github: {},
+  github: { limit: 24 },
   linkedin: {},
 };
 
 // Hourly maintenance: refresh expired tokens, retry failed syncs, run auto-sync.
+// Every successful auto-sync also normalizes + persists to the unified store so
+// the data actually reaches the briefing pipeline (parity with syncIntegration).
 export const integrationMaintenance = schedules.task({
   id: "integration-maintenance",
   cron: "0 * * * *",
@@ -40,6 +42,7 @@ export const integrationMaintenance = schedules.task({
 
     let refreshed = 0;
     let synced = 0;
+    let stored = 0;
     let retried = 0;
     const errors: string[] = [];
 
@@ -94,13 +97,31 @@ export const integrationMaintenance = schedules.task({
           ? await provider.executeTool(accessToken, tool, args, { userId })
           : await provider.getProfile(accessToken);
 
+        // Normalize + persist to the unified store — auto-sync must feed the
+        // briefing like an initial/foreground sync does.
+        let savedCount = 0;
+        const integrationId = row.id as string;
+        if (integrationId && result != null) {
+          try {
+            const { normalizeResult } = await import("@/lib/briefing/pipeline");
+            const { getUnifiedStoreRepo } = await import("@/lib/repositories/unified-store-repository");
+            const entities = normalizeResult(providerId, result, integrationId);
+            if (entities.length > 0) {
+              savedCount = await getUnifiedStoreRepo().upsertBatch(userId, integrationId, entities);
+            }
+          } catch (err) {
+            console.warn(`[maintenance] unified store upsert failed for ${providerId}:`, err);
+          }
+        }
+        stored += savedCount;
+
         await repo.setSyncStatus(userId, providerId, "success");
         await repo.addSyncLog({
           user_id: userId,
           provider: providerId,
           status: "success",
           message: tool ? `Auto-sync completed via ${tool}.` : "Profile sync completed.",
-          metadata: { itemCount: Array.isArray(result) ? result.length : undefined, auto: true },
+          metadata: { itemCount: Array.isArray(result) ? result.length : undefined, savedCount, auto: true },
           duration_ms: Date.now() - started,
         });
         synced++;
@@ -112,6 +133,6 @@ export const integrationMaintenance = schedules.task({
       }
     }
 
-    return { checked: rows.length, refreshed, synced, retried, errors: errors.slice(0, 20) };
+    return { checked: rows.length, refreshed, synced, stored, retried, errors: errors.slice(0, 20) };
   },
 });

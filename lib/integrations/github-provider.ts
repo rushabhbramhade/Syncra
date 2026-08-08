@@ -70,6 +70,8 @@ export class GitHubProvider implements IntegrationProvider {
         return GitHubService.searchIssues(accessToken, args.query as string);
       case "github_get_notifications":
         return GitHubService.getNotifications(accessToken);
+      case "github_get_recent_activity":
+        return GitHubService.getRecentActivity(accessToken);
       default:
         throw new Error(`Tool not supported: ${toolName}`);
     }

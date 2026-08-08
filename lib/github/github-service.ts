@@ -11,6 +11,25 @@ interface RateLimitState {
 
 const searchRateLimit: RateLimitState = { remaining: 30, resetAt: 0 };
 
+// Minimal shapes for the recent-activity fetch (fields we actually read).
+interface GitHubUser {
+  login?: string;
+}
+interface GitHubRepo {
+  full_name?: string;
+  name?: string;
+  pushed_at?: string | null;
+}
+interface GitHubCommit {
+  sha?: string;
+  html_url?: string | null;
+  commit?: {
+    message?: string;
+    author?: { name?: string; date?: string };
+    committer?: { date?: string };
+  };
+}
+
 function apiHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
@@ -98,6 +117,59 @@ export class GitHubService {
 
   static async getNotifications(token: string): Promise<unknown[]> {
     return fetchAllPages(`${GITHUB_API_BASE}/notifications`, token, 100);
+  }
+
+  /**
+   * Recent REAL activity for the authenticated user, sourced from the actual
+   * repositories they own: latest commits (and their push context) on the most
+   * recently-pushed repos. This is the fix for GitHub reporting "no recent
+   * activity" while the user actively pushes code: issues + notifications can
+   * both legitimately be empty, but commits are the user's ground truth.
+   *
+   * Returns a flat list of commit-shaped records ({ sha, repo, message, date,
+   * url, author }) newest-first, capped at `limit`. Uses `public_repo` scope, no
+   * extra OAuth consent needed.
+   */
+  static async getRecentActivity(token: string, limit = 24): Promise<unknown[]> {
+    const profile = (await this.getProfile(token)) as GitHubUser;
+    const login = String(profile.login || "");
+    if (!login) return [];
+
+    const repos = (await this.listRepos(token)) as GitHubRepo[];
+    const recentRepos = [...repos]
+      .sort((a, b) => new Date(b.pushed_at || 0).getTime() - new Date(a.pushed_at || 0).getTime())
+      .slice(0, 8);
+
+    const out: Array<Record<string, unknown>> = [];
+    await Promise.all(
+      recentRepos.map(async (repo) => {
+        const name = repo.full_name || repo.name;
+        if (!name) return;
+        try {
+          const commits = await fetchAllPages(
+            `${GITHUB_API_BASE}/repos/${encodeURIComponent(name)}/commits?author=${login}`,
+            token,
+            10,
+          );
+          for (const c of commits as GitHubCommit[]) {
+            out.push({
+              sha: c.sha,
+              repo: name,
+              message: c.commit?.message || "",
+              author: c.commit?.author?.name || login,
+              date: c.commit?.author?.date || c.commit?.committer?.date || null,
+              url: c.html_url || null,
+            });
+          }
+        } catch {
+          // A single inaccessible repo must never fail the whole activity
+          // fetch — skip it and keep the rest.
+        }
+      }),
+    );
+
+    out.sort((a, b) => new Date(String(b.date || 0)).getTime() - new Date(String(a.date || 0)).getTime());
+    return out.slice(0, limit);
   }
 
   static async commentOnIssue(token: string, repo: string, issueNumber: number, body: string): Promise<unknown> {

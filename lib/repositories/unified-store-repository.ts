@@ -1,6 +1,6 @@
 import type { AdminDb } from "./types";
-import { createAdminDb } from "@/lib/db";
 import type { NormalizedEntity } from "@/lib/integrations/types";
+import { createRequire } from "node:module";
 
 /**
  * Unified entity store — the single write path for all normalized entities.
@@ -150,6 +150,9 @@ export class UnifiedStoreRepository {
 }
 
 export function getUnifiedStoreRepo(): UnifiedStoreRepository {
+  // Lazy-imported: @insforge/sdk pulls heavy native deps at module load; keep
+  // this stage importable in isolation (unit tests, edge functions).
+  const { createAdminDb } = createRequire(import.meta.url)("@/lib/db") as typeof import("@/lib/db");
   return new UnifiedStoreRepository(createAdminDb());
 }
 
@@ -158,10 +161,11 @@ export function getUnifiedStoreRepo(): UnifiedStoreRepository {
 export async function getRecentMessages(
   userId: string,
   integrationId: string,
-  limit = 10
+  limit = 10,
+  db?: AdminDb
 ): Promise<Record<string, unknown>[]> {
-  const db = createAdminDb();
-  const { data, error } = await db.database
+  const client = db ?? (await import("@/lib/db")).createAdminDb();
+  const { data, error } = await client.database
     .from("unified_messages")
     .select("*")
     .eq("user_id", userId)

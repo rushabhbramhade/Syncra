@@ -125,20 +125,60 @@ export class SlackApiService {
       .slice(0, 5)
       .map(c => c.id);
     const allMessages: unknown[] = [];
+    const failures: string[] = [];
     for (const channelId of channelIds) {
-      const res = await fetchWithRetry(
-        `${this.baseUrl}/conversations.history?channel=${channelId}&limit=${Math.ceil(limit / channelIds.length)}`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data.ok && Array.isArray(data.messages)) {
-        allMessages.push(...data.messages.map((m: Record<string, unknown>) => ({
-          ...m,
-          channel: channelId,
-        })));
+      try {
+        const res = await fetchWithRetry(
+          `${this.baseUrl}/conversations.history?channel=${channelId}&limit=${Math.ceil(limit / channelIds.length)}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (!res.ok) {
+          failures.push(`${channelId}: HTTP ${res.status}`);
+          continue;
+        }
+        const data = await res.json();
+        if (!data.ok) {
+          // NEVER swallow a real Slack error. `not_in_channel` means the bot
+          // is not a member and must be invited; `missing_scope` means the
+          // token lacks history scopes and must be re-authorized. Both are
+          // logged so the briefing surfaces the cause instead of a fake
+          // "no recent activity".
+          failures.push(`${channelId}: ${data.error}`);
+          continue;
+        }
+        if (Array.isArray(data.messages)) {
+          allMessages.push(...data.messages.map((m: Record<string, unknown>) => ({
+            ...m,
+            channel: channelId,
+          })));
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        failures.push(`${channelId}: ${msg}`);
       }
     }
+
+    // Every channel failed → this is a real connectivity/permission problem,
+    // not "no activity". Surface the first concise cause so the health seat and
+    // doctor the diagnosis; the two common ones are the only ones given special
+    // human wording. Thrown (not returned empty) so executeMCPAction marks the
+    // provider status accordingly (permission_missing → reconnect).
+    if (allMessages.length === 0 && failures.length > 0) {
+      if (failures.some(f => f.includes("not_in_channel"))) {
+        throw new Error(
+          `Slack: the Syncra bot is not a member of any channel it can read (not_in_channel). ` +
+          `Invite the bot to a channel (e.g. #general) to capture messages.`
+        );
+      }
+      if (failures.some(f => f.includes("missing_scope"))) {
+        throw new Error(
+          `Slack: token is missing channel history scopes (missing_scope). ` +
+          `Reconnect Slack to grant channels:history, im:history, groups:history, mpim:history.`
+        );
+      }
+      throw new Error(`Slack: could not read any message from the connected channels — ${failures[0]}`);
+    }
+
     return allMessages.slice(0, limit);
   }
 }
