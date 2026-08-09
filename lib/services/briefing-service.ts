@@ -5,6 +5,7 @@ import { UsersRepository } from "@/lib/repositories/users-repository";
 import { getUnifiedStoreRepo } from "@/lib/repositories/unified-store-repository";
 import { executeMCPAction } from "@/lib/integrations/actions-core";
 import { generateJsonResponse } from "@/lib/ai-service";
+import { resolveNvidiaModel } from "@/lib/llm-gateway/config";
 import { publishEvent } from "@/lib/notifications/events";
 import { BRIEFING_CATEGORIES } from "@/lib/constants/briefing-categories";
 import { logger, getCorrelationId } from "@/lib/logger";
@@ -652,8 +653,12 @@ BALANCE: When sizing "items", prioritize by IMPORTANCE and urgency across provid
 Source manifest (real item counts delivered to the AI from each integration):
 ${buildManifest(healthReport)}`;
 
-      // 4. Generate AI summary
-      const aiResult = await generateJsonResponse<AIResponseBriefing>(systemPrompt + coveragePrompt, rawContext, { temperature: 0.2 });
+      // 4. Generate AI summary. Cross-platform synthesis and the final digest share
+      // this single pipeline call; the gateway routes it on the "reasoning"
+      // task class (NVIDIA primary → OpenRouter fallback). Latency-tolerant,
+      // so always task mode — never racing models for a UX gain that async
+      // digest generation does not have.
+      const aiResult = await generateJsonResponse<AIResponseBriefing>(systemPrompt + coveragePrompt, rawContext, { temperature: 0.2, task: "reasoning" });
       if (!aiResult) {
         throw new Error("Central AI service returned null response.");
       }
@@ -781,7 +786,7 @@ ${buildManifest(healthReport)}`;
         ),
         provider_health: healthReport as Record<string, unknown>,
         generated_at: new Date().toISOString(),
-        ai_model: process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat-v3",
+        ai_model: resolveNvidiaModel("reasoning"),
         status: "completed",
       };
       let briefingRecord;

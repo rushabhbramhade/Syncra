@@ -8,7 +8,7 @@ import { getConnectionStatus } from "@/app/actions/integrations";
 import { executeMCPAction } from "@/lib/integrations/actions-core";
 import { getAuthenticatedUser, requireOwnership } from "@/lib/auth-guard";
 import { checkRateLimit } from "@/lib/rate-limiter";
-import OpenAI from "openai";
+import { llmGateway } from "@/lib/llm-gateway";
 import { z } from "zod";
 
 // Helper to authenticate user from cookies
@@ -411,22 +411,6 @@ export async function generateDraftAction(instruction: string, platform: string)
       return { success: false, error: "Rate limit exceeded. Please wait before generating another draft." };
     }
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-      return { success: false, error: "OPENROUTER_API_KEY is not configured" };
-    }
-
-    const client = new OpenAI({
-      baseURL: "https://openrouter.ai/api/v1",
-      apiKey,
-      defaultHeaders: {
-        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-        "X-Title": "Syncra Dashboard",
-      },
-      timeout: 20000,
-    });
-
-    const model = process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat-v3";
     const guidelines: Record<string, string> = {
       gmail: "formal email format with greeting and sign-off",
       slack: "casual, direct channel message (no greeting/sign-off needed)",
@@ -435,8 +419,10 @@ export async function generateDraftAction(instruction: string, platform: string)
       discord: "casual channel message",
     };
 
-    const response = await client.chat.completions.create({
-      model,
+    const served = await llmGateway.complete({
+      task: "fast",
+      temperature: 0.7,
+      maxTokens: 500,
       messages: [
         {
           role: "system",
@@ -448,11 +434,9 @@ Output ONLY the message text, no explanations.`,
         },
         { role: "user", content: normalizedInstruction },
       ],
-      temperature: 0.7,
-      max_tokens: 500,
     });
 
-    const draft = response.choices[0]?.message?.content?.trim();
+    const draft = served.content.trim();
     if (!draft) {
       return { success: false, error: "AI returned empty response" };
     }
