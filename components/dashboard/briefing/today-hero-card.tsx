@@ -3,7 +3,7 @@
 import React, { useMemo } from "react";
 import { BriefingRecord } from "@/lib/repositories/briefings-repository";
 import { Card } from "@/components/ui/card";
-import { Sparkles, Calendar, BookOpen, RefreshCw, Globe } from "lucide-react";
+import { Sparkles, Calendar, BookOpen, RefreshCw } from "lucide-react";
 
 interface TodayHeroCardProps {
   latestBriefing: BriefingRecord | null;
@@ -43,13 +43,17 @@ function getPlatformColor(platform: string): string {
   return "bg-slate-500/10 text-slate-600 border-slate-500/20";
 }
 
-const CIRCUMFERENCE = 2 * Math.PI * 22;
-
 export const TodayHeroCard = React.memo(function TodayHeroCard({ latestBriefing, onRegenerate, isGenerating = false }: TodayHeroCardProps) {
+  // Real metrics only: platforms and item counts are derived from the actual
+  // briefing items each briefing run persisted — never a fabricated score.
   const latestBriefContent = latestBriefing?.full_content as Record<string, any> | undefined;
   const platforms = useMemo(() => latestBriefContent?.items
     ? [...new Set(latestBriefContent.items.map((i: any) => i.platform))]
     : [], [latestBriefing]);
+  const realItemCount = latestBriefContent?.items?.length ?? 0;
+  const highPriorityCount = latestBriefContent?.items
+    ? latestBriefContent.items.filter((i: any) => i.priority === "high").length
+    : 0;
 
   if (!latestBriefing) {
     return (
@@ -102,19 +106,18 @@ export const TodayHeroCard = React.memo(function TodayHeroCard({ latestBriefing,
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5">
-              <Globe className="w-4 h-4 text-text-slate" />
-              <span className="text-[12px] font-bold text-text-slate">{platforms.length} sources</span>
-            </div>
-            <div className="relative flex items-center justify-center">
-              <svg className="w-14 h-14 transform -rotate-90">
-                <circle cx="28" cy="28" r="22" stroke="currentColor" className="text-border-mist" strokeWidth="5" fill="transparent" />
-                <circle cx="28" cy="28" r="22" stroke="currentColor" className="text-accent-purple" strokeWidth="5" fill="transparent"
-                  strokeDasharray={CIRCUMFERENCE}
-                  strokeDashoffset={CIRCUMFERENCE * (1 - (latestBriefing.priority_score || 50) / 100)} />
-              </svg>
-              <span className="absolute font-display font-black text-sm text-secondary">{latestBriefing.priority_score}</span>
-            </div>
+            {realItemCount > 0 && (
+              <div className="flex items-center gap-1.5 bg-background-mist border border-border-mist rounded-xl px-3 py-1.5">
+                <span className="font-display font-black text-[15px] text-secondary leading-none">{realItemCount}</span>
+                <span className="text-[11px] font-bold text-text-slate">items</span>
+              </div>
+            )}
+            {highPriorityCount > 0 && (
+              <div className="flex items-center gap-1.5 bg-error/5 border border-error/20 rounded-xl px-3 py-1.5">
+                <span className="font-display font-black text-[15px] text-error leading-none">{highPriorityCount}</span>
+                <span className="text-[11px] font-bold text-error">high priority</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -125,13 +128,10 @@ export const TodayHeroCard = React.memo(function TodayHeroCard({ latestBriefing,
         <div className="flex flex-wrap items-center gap-2">
           {(platforms as string[]).map((p) => (
             <span key={p} className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border ${getPlatformColor(p)} flex items-center gap-1.5`}>
-              <span>{getPlatformIcon(p)}</span>
+              {getPlatformIcon(p)}
               <span className="capitalize">{p}</span>
             </span>
           ))}
-          <span className="text-[11px] font-bold text-text-slate bg-background-mist px-2.5 py-1 rounded-lg border border-border-mist">
-            {latestBriefContent?.totalImportantItems || 0} items
-          </span>
         </div>
       </div>
     </Card>

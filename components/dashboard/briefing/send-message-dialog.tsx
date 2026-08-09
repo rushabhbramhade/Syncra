@@ -64,7 +64,7 @@ export function SendMessageDialog({ isOpen, onClose, userId }: SendMessageDialog
     try {
       const res = await generateDraftAction(draftInstruction.trim(), platform);
       if (!res.success) throw new Error(res.error || "Failed to generate draft");
-      setMessage(res.draft!);
+      setMessage(res.draft);
       setStep(4);
       setTimeout(() => {
         textareaRef.current?.focus();

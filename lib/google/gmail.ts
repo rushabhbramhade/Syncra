@@ -15,11 +15,21 @@ export interface GmailEmailSummary {
   threadId: string;
   from: string;
   to: string;
+  /** Real Cc header when present (never fabricated). */
+  cc?: string;
   subject: string;
   date: string;
   rawDate?: string;
   snippet: string;
+  /** Decoded real message body when Gmail returns one. */
+  body?: string;
+  labels: string[];
   unread: boolean;
+  /** Provider-verified epoch-ms timestamp (Gmail internalDate), when present. */
+  internalDate?: string;
+  /** RFC 822 `Message-ID` header value — the REAL message id, distinct from
+   *  Gmail's API messageId. Only ever set from Gmail's actual header. */
+  rfc822MessageId?: string;
 }
 
 export interface GmailEmailDetail {
@@ -244,11 +254,14 @@ export class GmailService {
 
     const emailSummaries: GmailEmailSummary[] = [];
 
-    // Fetch individual email details concurrently
+    // Fetch individual email details concurrently. `format=full` returns the
+    // real headers AND the decodable body, so the briefing can render faithful
+    // content instead of only the snippet. Gmail ids/threadIds are used as-is —
+    // never replaced with generated identifiers.
     await Promise.all(
       data.messages.map(async (msg: { id: string; threadId: string }) => {
         try {
-          const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`;
+          const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`;
           const detailRes = await fetchWithRetry(detailUrl, {
             headers: { Authorization: `Bearer ${accessToken}` },
           });
@@ -256,12 +269,16 @@ export class GmailService {
           if (detailRes.ok) {
             const detail = await detailRes.json();
             const headers = detail.payload?.headers || [];
-            
+
             const from = getHeader(headers, "From") || "Unknown Sender";
             const to = getHeader(headers, "To") || "me";
+            const cc = getHeader(headers, "Cc") || undefined;
             const subject = getHeader(headers, "Subject") || "(No Subject)";
             const dateStr = getHeader(headers, "Date") || "";
-            
+            // The RFC 822 Message-ID header is the message's REAL identity —
+            // distinct from Gmail's API messageId. Used for rfc822msgid: links.
+            const rfc822MessageId = getHeader(headers, "Message-ID")?.trim() || undefined;
+
             let formattedDate = dateStr;
             try {
               const d = new Date(dateStr);
@@ -275,16 +292,23 @@ export class GmailService {
               }
             } catch {}
 
+            const body = getEmailBody(detail.payload);
+
             emailSummaries.push({
               id: detail.id,
               threadId: detail.threadId,
               from,
               to,
+              cc: cc || undefined,
               subject,
               date: formattedDate,
               rawDate: dateStr || undefined,
               snippet: detail.snippet || "",
-              unread: detail.labelIds?.includes("UNREAD") || false,
+              body: body || undefined,
+              labels: Array.isArray(detail.labelIds) ? detail.labelIds as string[] : [],
+              unread: (Array.isArray(detail.labelIds) && detail.labelIds.includes("UNREAD")) || false,
+              internalDate: detail.internalDate != null ? String(detail.internalDate) : undefined,
+              rfc822MessageId,
             });
           }
         } catch (e) {

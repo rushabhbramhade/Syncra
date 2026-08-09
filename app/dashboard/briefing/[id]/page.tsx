@@ -99,7 +99,9 @@ export default function BriefingDetailPage() {
     );
   }
 
-  const priorityColor = briefing.priority_score >= 7 ? "text-error" : briefing.priority_score >= 4 ? "text-warning" : "text-success";
+  const highCount = items.filter(i => String(i.priority).toLowerCase() === "high").length;
+  const totalCount = items.length;
+  const priorityColor = totalCount > 0 ? "text-accent-purple" : "text-text-slate";
 
   return (
     <div className="pb-10 font-sans max-w-4xl mx-auto space-y-6 animate-fade-in">
@@ -154,7 +156,7 @@ export default function BriefingDetailPage() {
                 </span>
                 <span className="flex items-center gap-1">
                   <BarChart3 className={`w-3.5 h-3.5 ${priorityColor}`} />
-                  <span className={`font-bold ${priorityColor}`}>Priority: {briefing.priority_score}/10</span>
+                  <span className={`font-bold ${priorityColor}`}>{highCount} high priority · {totalCount} items</span>
                 </span>
               </div>
             </div>

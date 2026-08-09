@@ -1,23 +1,10 @@
 import "server-only";
 
 import { createAdminDb } from "@/lib/db";
+import { bucketConfig as rateLimitBucketConfig, tierMultiplier } from "@/lib/rate-limit-config";
+import { getRateLimitHeaders } from "@/lib/rate-limit-headers";
 
-interface RateLimitConfig {
-  windowMs: number;
-  maxRequests: number;
-}
-
-const DEFAULT_CONFIGS: Record<string, RateLimitConfig> = {
-  "ai-agent": { windowMs: 60_000, maxRequests: 10 },
-  "api": { windowMs: 60_000, maxRequests: 30 },
-  "auth": { windowMs: 60_000, maxRequests: 5 },
-};
-
-const TIER_MULTIPLIERS: Record<string, number> = {
-  free: 1,
-  pro: 3,
-  enterprise: 10,
-};
+export { getRateLimitHeaders };
 
 interface RateLimitResult {
   allowed: boolean;
@@ -25,6 +12,10 @@ interface RateLimitResult {
   remaining: number;
   resetAt: number;
   retryAfterMs: number;
+  /** True ONLY when the limiter itself could not be reached (infra/DB failure).
+   *  NOT a real user rate-limit. Callers must distinguish the two: infra →
+   *  "temporarily unavailable" (503), genuine deny → "rate limit exceeded" (429). */
+  unavailable: boolean;
 }
 
 interface RateLimitRpcRow {
@@ -39,8 +30,8 @@ export async function checkRateLimit(
   bucket: string,
   userTier: string = "free"
 ): Promise<RateLimitResult> {
-  const config = DEFAULT_CONFIGS[bucket] || DEFAULT_CONFIGS.api;
-  const multiplier = TIER_MULTIPLIERS[userTier] || 1;
+  const config = rateLimitBucketConfig(bucket);
+  const multiplier = tierMultiplier(userTier);
   const maxRequests = config.maxRequests * multiplier;
 
   const now = Date.now();
@@ -69,6 +60,7 @@ export async function checkRateLimit(
       remaining: Number(row.remaining),
       resetAt: Number(row.reset_at_ms),
       retryAfterMs: Number(row.retry_after_ms),
+      unavailable: false,
     };
   } catch (error) {
     const failClosed = bucket === "ai-agent";
@@ -79,15 +71,7 @@ export async function checkRateLimit(
       remaining: 0,
       resetAt: now + config.windowMs,
       retryAfterMs: failClosed ? config.windowMs : 0,
+      unavailable: true,
     };
   }
-}
-
-export function getRateLimitHeaders(result: RateLimitResult): Record<string, string> {
-  return {
-    "X-RateLimit-Limit": String(result.limit),
-    "X-RateLimit-Remaining": String(result.remaining),
-    "X-RateLimit-Reset": String(Math.ceil(result.resetAt / 1000)),
-    "Retry-After": String(Math.ceil(result.retryAfterMs / 1000)),
-  };
 }

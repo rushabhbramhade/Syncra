@@ -40,6 +40,18 @@ export async function POST(req: NextRequest) {
 
     // 2a. Rate limit check (keyed on auth UUID — prevents cross-account collisions)
     const rateLimitCheck = await checkRateLimit(authUserId, "ai-agent", "free");
+    if (rateLimitCheck.unavailable) {
+      // The limiter itself failed — this is NOT the user hitting a limit.
+      // Honest 503; system metrics may be degraded but never a false 429.
+      console.error("Rate limiter unreachable during chat request", { authUserId, error: rateLimitCheck });
+      return new Response(JSON.stringify({
+        error: "Service temporarily unavailable. Please try again in a moment.",
+        retryAfter: rateLimitCheck.retryAfterMs,
+      }), {
+        status: 503,
+        headers: { "Content-Type": "application/json", ...getRateLimitHeaders(rateLimitCheck) },
+      });
+    }
     if (!rateLimitCheck.allowed) {
       return new Response(JSON.stringify({
         error: "Rate limit exceeded. Please wait before sending another message.",

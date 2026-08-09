@@ -1,10 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
-import { ChevronDown, ChevronRight, Sparkles, ShieldCheck, Brain, GitMerge, Clock, Target, ServerCog } from "lucide-react";
-import {
-  BriefingIntelligenceContent,
-} from "@/lib/briefing-intelligence";
+import { ChevronDown, ChevronRight, Sparkles, GitMerge, Clock, Target, ServerCog, ExternalLink } from "lucide-react";
+import { BriefingIntelligenceContent, IntelligenceRecommendation } from "@/lib/briefing-intelligence";
+import { getGmailDeepLink, getGmailDeepLinkFromMetadata } from "@/lib/google/gmail-links";
 
 // Per-platform pipeline report persisted with each briefing (provider_health).
 // Authoritative: never hides a connected integration, even with zero data.
@@ -68,18 +67,6 @@ function Collapse({ label, children, defaultOpen = false }: { label: string; chi
   );
 }
 
-function HealthBar({ score }: { score: number }) {
-  const color = score >= 70 ? "bg-emerald-500" : score >= 45 ? "bg-amber-500" : "bg-red-500";
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-2 rounded-full bg-border-mist overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
-      </div>
-      <span className="text-[12px] font-bold text-secondary w-7 text-right">{score}</span>
-    </div>
-  );
-}
-
 export const BriefingIntelligence = React.memo(function BriefingIntelligence({
   content,
   providerHealth,
@@ -90,8 +77,7 @@ export const BriefingIntelligence = React.memo(function BriefingIntelligence({
   const [showReasoning, setShowReasoning] = useState(false);
 
   if (!content) return null;
-  const { health, insights, relationships, recommendations, goals, timeline, confidence, sourceStats } = content;
-
+  const { relationships, recommendations, goals, timeline, confidence, sourceStats } = content;
   const healthLines: Record<string, ProviderHealthLine> = (providerHealth || {}) as Record<string, ProviderHealthLine>;
   const providers = Object.keys(healthLines).sort();
   // Real "missing data": connected integrations with a verified successful
@@ -117,43 +103,17 @@ export const BriefingIntelligence = React.memo(function BriefingIntelligence({
   const topActions = (recommendations || []).filter(r => r.priority === "high" || r.confidence >= 70).slice(0, 5);
   const otherActions = (recommendations || []).slice(topActions.length);
 
-  const insightIcon: Record<string, string> = {
-    warning: "text-red-500",
-    opportunity: "text-emerald-600",
-    pattern: "text-accent-purple",
-    concept: "text-sky-600",
+  const actionSourceLink = (r: IntelligenceRecommendation): string | null => {
+    // Only ever link when the recommendation carries REAL Gmail provenance
+    // resolved by the backend from the referenced entity. The AI's sourceId is
+    // never trusted as a deep-link target.
+    if (String(r.platform || "").toLowerCase() !== "gmail") return null;
+    return getGmailDeepLink(r.threadId, r.messageId, r.rfc822MessageId)
+      ?? getGmailDeepLinkFromMetadata(r as unknown as Record<string, unknown>);
   };
 
   return (
     <div className="space-y-5">
-      {health && (
-        <SectionCard icon={<ShieldCheck className="w-4 h-4" />} title="Workspace Health">
-          <div className="flex items-center gap-4 mb-4">
-            <div className="relative flex items-center justify-center shrink-0">
-              <svg className="w-16 h-16 transform -rotate-90">
-                <circle cx="32" cy="32" r="26" stroke="currentColor" className="text-border-mist" strokeWidth="5" fill="transparent" />
-                <circle cx="32" cy="32" r="26" stroke="currentColor"
-                  className={health.overall >= 70 ? "text-emerald-500" : health.overall >= 45 ? "text-amber-500" : "text-red-500"}
-                  strokeWidth="5" fill="transparent"
-                  strokeDasharray={2 * Math.PI * 26}
-                  strokeDashoffset={2 * Math.PI * 26 * (1 - (health.overall || 50) / 100)} />
-              </svg>
-              <span className="absolute font-display font-black text-lg text-secondary">{health.overall || 0}</span>
-            </div>
-            <p className="text-[13.5px] font-medium text-secondary leading-relaxed flex-1">{health.summary}</p>
-          </div>
-          <div className="space-y-2.5">
-            {(health.breakdown || []).map(d => (
-              <div key={d.name} className="grid grid-cols-[130px_1fr] md:grid-cols-[130px_1fr_1fr] gap-2 items-center">
-                <span className="text-[12px] font-bold text-text-slate">{d.name}</span>
-                <HealthBar score={d.score} />
-                <span className="text-[11.5px] text-text-slate font-medium hidden md:block">{d.reason}</span>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-      )}
-
       {providers.length > 0 && (
         <SectionCard icon={<ServerCog className="w-4 h-4" />} title="Integration Health">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -227,6 +187,17 @@ export const BriefingIntelligence = React.memo(function BriefingIntelligence({
                     Sources: {r.affectedPlatforms.join(", ")}
                   </p>
                 )}
+                {actionSourceLink(r) && (
+                  <a
+                    href={actionSourceLink(r)!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[11.5px] font-bold text-accent-purple hover:text-accent-purple/80 mt-2"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Open in Gmail
+                  </a>
+                )}
               </div>
             ))}
           </div>
@@ -250,19 +221,6 @@ export const BriefingIntelligence = React.memo(function BriefingIntelligence({
               ))}
             </div>
           )}
-        </SectionCard>
-      )}
-
-      {insights && insights.length > 0 && (
-        <SectionCard icon={<Brain className="w-4 h-4" />} title="Insights">
-          <ul className="space-y-2">
-            {insights.map((ins, i) => (
-              <li key={i} className="flex items-start gap-2.5">
-                <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${insightIcon[ins.type] || "text-text-slate"}`} style={{ background: "currentColor" }} />
-                <span className="text-[13px] font-medium text-secondary leading-relaxed">{ins.text}</span>
-              </li>
-            ))}
-          </ul>
         </SectionCard>
       )}
 
@@ -309,22 +267,13 @@ export const BriefingIntelligence = React.memo(function BriefingIntelligence({
         </SectionCard>
       )}
 
-      {(confidence || sourceStats) && (
-        <Collapse label="AI Reasoning & Data Sources" defaultOpen={confidence && confidence.overall < 70}>
+      {(confidence?.reason || (confidence?.missingData?.length ?? 0) > 0 || sourceStats) && (
+        <Collapse label="AI Reasoning & Data Sources" defaultOpen={false}>
           <div className="space-y-4">
             {confidence && (
               <div className="flex items-start gap-4">
-                <div className="relative flex items-center justify-center shrink-0">
-                  <svg className="w-14 h-14 transform -rotate-90">
-                    <circle cx="28" cy="28" r="22" stroke="currentColor" className="text-border-mist" strokeWidth="4" fill="transparent" />
-                    <circle cx="28" cy="28" r="22" stroke="currentColor" className="text-accent-purple" strokeWidth="4" fill="transparent"
-                      strokeDasharray={2 * Math.PI * 22}
-                      strokeDashoffset={2 * Math.PI * 22 * (1 - (confidence.overall || 50) / 100)} />
-                  </svg>
-                  <span className="absolute font-display font-black text-sm text-secondary">{confidence.overall || 0}</span>
-                </div>
                 <div className="flex-1">
-                  <p className="text-[13px] font-semibold text-secondary mb-1">Confidence: {confidence.overall || 0}%</p>
+                  <p className="text-[13px] font-semibold text-secondary mb-1">AI Confidence</p>
                   <p className="text-[12.5px] text-text-slate font-medium">{confidence.reason}</p>
                   {missingData && missingData.length > 0 && (
                     <p className="text-[11.5px] text-amber-600 font-semibold mt-2">

@@ -1,7 +1,6 @@
 export const BRIEFING_CATEGORIES = [
   "email",
   "messages",
-  "mentions",
   "tasks",
   "followUps",
   "activity",

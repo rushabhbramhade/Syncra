@@ -63,18 +63,20 @@ function renderDailyBrief(ctx: TemplateContext): FormattedNotification {
 }
 
 function renderBriefingGenerated(ctx: TemplateContext): FormattedNotification {
-  const { title, executiveSummary, priorityScore, totalImportantItems } = ctx.data as {
+  const { title, executiveSummary, itemCount, highPriorityCount } = ctx.data as {
     title?: string;
     executiveSummary?: string;
-    priorityScore?: number;
-    totalImportantItems?: number;
+    itemCount?: number;
+    highPriorityCount?: number;
   };
+  const countLines: string[] = [];
+  if (typeof itemCount === "number") countLines.push(`Items: <b>${itemCount}</b>`);
+  if (typeof highPriorityCount === "number") countLines.push(`High priority: <b>${highPriorityCount}</b>`);
   return {
     title: `📋 ${title || "AI Briefing Available"}`,
     body: [
       `<b>${escapeHtml(title || "Syncra Briefing")}</b>`,
-      `Priority Score: <b>${priorityScore || 0}/100</b>`,
-      `Important Items: <b>${totalImportantItems || 0}</b>`,
+      ...countLines,
       "",
       executiveSummary ? `${escapeHtml(executiveSummary)}` : "A new AI-generated briefing is ready.",
       "",

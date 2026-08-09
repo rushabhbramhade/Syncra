@@ -8,10 +8,27 @@ import { getConnectionStatus } from "@/app/actions/integrations";
 import { executeMCPAction } from "@/lib/integrations/actions-core";
 import { getAuthenticatedUser, requireOwnership } from "@/lib/auth-guard";
 import { checkRateLimit } from "@/lib/rate-limiter";
+import { DRAFT_RATE_LIMIT_ERROR } from "@/lib/rate-limit-config";
+import { dedupeKey, singleFlight } from "@/lib/single-flight";
+import { resolveGmailReplyContext } from "@/lib/briefing/pipeline";
 import { llmGateway } from "@/lib/llm-gateway";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 // Helper to authenticate user from cookies
+function createRequestId(): string {
+  return randomUUID();
+}
+
+/** Extract a bare email address from a Gmail From/To header value. */
+function extractGmailRecipientFromHeader(headerValue: string): string | null {
+  const trimmed = headerValue.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/<([^>]+)>/);
+  const candidate = (match ? match[1] : trimmed).trim();
+  return /[^\s@]+@[^\s@]+/.test(candidate) ? candidate : null;
+}
+
 async function verifyUserAccess(userId: string) {
   const guard = await requireOwnership(userId);
   if ("error" in guard) {
@@ -238,47 +255,45 @@ export async function replyToBriefingItemAction(
 
     // 2. Route reply to corresponding MCP action based on platform
     if (platform === "gmail") {
-      // Find sender email address from metadata
-      let fromField = metadataString(metadata, "from");
-      let emailMatch = fromField.match(/<([^>]+)>/) || [null, fromField];
-      let recipient = emailMatch[1]?.trim() || fromField.trim();
-      const subject = metadataString(metadata, "subject") || "Re: Syncra Update";
-      const subjectWithRe = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
+      // Real thread context — preserved from the provider through enrichment.
+      // Never send to a guessed recipient, never break the thread chain.
+      const ctx = resolveGmailReplyContext(metadata as Record<string, unknown>);
 
-      // If no recipient from metadata, try fetching from Gmail API
-      if (!recipient && item.source_id) {
+      // If metadata lacks the real sender, fetch it from the actual Gmail
+      // thread headers — never invent a recipient.
+      let recipient = ctx.recipient;
+      if (ctx.needsHeaderLookup && ctx.lookupThreadId) {
         try {
           const integrationsRepo = new IntegrationsRepository(db);
           const record =
-            await integrationsRepo.findByUserAndProvider(access.userId, "gmail") ||
-            await integrationsRepo.findByUserAndProvider(access.authUserId, "gmail");
+            await integrationsRepo.findByUserAndProvider(access.authUserId, "gmail") ||
+            await integrationsRepo.findByUserAndProvider(access.userId, "gmail");
           if (record) {
             const token = integrationsRepo.decryptToken(record.encrypted_access_token);
             if (token) {
               const { GmailService } = await import("@/lib/google/gmail");
-              const headers = await GmailService.getThreadHeaders(token, item.source_id);
-              if (headers?.from) {
-                fromField = headers.from;
-                emailMatch = fromField.match(/<([^>]+)>/) || [null, fromField];
-                recipient = emailMatch[1]?.trim() || fromField.trim();
-              }
+              const headers = await GmailService.getThreadHeaders(token, ctx.lookupThreadId);
+              if (headers?.from) recipient = extractGmailRecipientFromHeader(headers.from);
             }
           }
         } catch {
-          // ignore
+          // keep the metadata-derived sender (may remain null → honest error)
         }
       }
 
       if (!recipient) {
-        throw new Error("Could not extract email recipient from metadata.");
+        throw new Error("Could not extract a real sender to reply to — connect a fresh sync for full email context.");
+      }
+      if (!ctx.threadId && !ctx.messageId) {
+        throw new Error("This email is missing its Gmail thread context — re-sync the integration to reply in-thread.");
       }
 
-      console.log(`Sending reply email to ${recipient}...`);
+      console.log(`Sending Gmail reply in-thread to ${recipient}${ctx.threadId ? ` (thread ${ctx.threadId})` : ""}`);
       mcpResult = await executeMCPAction(access.authUserId, "gmail", "gmail_send_email", {
         to: recipient,
-        subject: subjectWithRe,
+        subject: ctx.subject,
         body: normalizedReply,
-        threadId: item.source_id || undefined,
+        threadId: ctx.threadId || ctx.messageId || undefined,
       });
     } else if (platform === "whatsapp") {
       const contact = metadataString(metadata, "chatId") || metadataString(metadata, "fromName") || item.source_id;
@@ -371,8 +386,15 @@ export async function getBriefingItemSenderAction(userId: string, itemId: string
   try {
     if (platform === "gmail") {
       const { GmailService } = await import("@/lib/google/gmail");
-      const headers = await GmailService.getThreadHeaders(accessToken, item.source_id);
-      if (headers) return { from: headers.from, to: headers.to };
+      // Prefer the real thread id (preserved from the provider), fall back to
+      // the stored message id when only that exists.
+      const threadId = typeof meta.threadId === "string"
+        ? meta.threadId
+        : (item.source_id ?? null);
+      if (threadId) {
+        const headers = await GmailService.getThreadHeaders(accessToken, threadId);
+        if (headers) return { from: headers.from, to: headers.to };
+      }
     }
   } catch {
     // Fallback: try as message ID
@@ -390,61 +412,99 @@ export async function checkPlatformsConnectionAction(userId: string, platforms: 
   return results;
 }
 
-export async function generateDraftAction(instruction: string, platform: string) {
-  try {
-    const auth = await getAuthenticatedUser();
-    if ("error" in auth) {
-      return { success: false, error: "Unauthorized" };
-    }
+export type DraftActionResult =
+  | { success: true; draft: string }
+  | { success: false; error: string };
 
-    const normalizedInstruction = instruction.trim();
-    const supportedPlatforms = new Set(["gmail", "slack", "whatsapp", "telegram", "discord"]);
-    if (!normalizedInstruction || normalizedInstruction.length > 4000) {
-      return { success: false, error: "Draft instructions must be between 1 and 4000 characters" };
-    }
-    if (!supportedPlatforms.has(platform)) {
-      return { success: false, error: "Unsupported messaging platform" };
-    }
+export async function generateDraftAction(instruction: string, platform: string): Promise<DraftActionResult> {
+  const requestId = createRequestId();
+  const startedAt = Date.now();
 
-    const rateLimit = await checkRateLimit(auth.user.id, "ai-agent", "free");
-    if (!rateLimit.allowed) {
-      return { success: false, error: "Rate limit exceeded. Please wait before generating another draft." };
-    }
+  const auth = await getAuthenticatedUser();
+  if ("error" in auth) {
+    return { success: false, error: "Unauthorized" };
+  }
 
-    const guidelines: Record<string, string> = {
-      gmail: "formal email format with greeting and sign-off",
-      slack: "casual, direct channel message (no greeting/sign-off needed)",
-      whatsapp: "short, friendly chat message",
-      telegram: "concise, direct message",
-      discord: "casual channel message",
-    };
+  const normalizedInstruction = instruction.trim();
+  const supportedPlatforms = new Set(["gmail", "slack", "whatsapp", "telegram", "discord"]);
+  if (!normalizedInstruction || normalizedInstruction.length > 4000) {
+    return { success: false, error: "Draft instructions must be between 1 and 4000 characters" };
+  }
+  if (!supportedPlatforms.has(platform)) {
+    return { success: false, error: "Unsupported messaging platform" };
+  }
 
-    const served = await llmGateway.complete({
-      task: "fast",
-      temperature: 0.7,
-      maxTokens: 500,
-      messages: [
-        {
-          role: "system",
-          content: `You are a draft message generator. Generate a concise, professional message draft.
+  // Single-flight: an identical instruction+platform from the same user while a
+  // generation is already in flight shares that one request — a double click or
+  // React double-invoke can never burn two AI calls (the source of the
+  // "Rate limit exceeded" spikes under single-click usage).
+  const dedupe = dedupeKey(["draft", auth.user.id, platform, normalizedInstruction]);
+  return singleFlight(dedupe, async () => {
+    const attempt = 1;
+    const provider = "llm-gateway";
+    try {
+      const rateLimit = await checkRateLimit(auth.user.id, "ai-draft", "free");
+      if (rateLimit.allowed) {
+        // proceed
+      } else if (rateLimit.unavailable) {
+        // The limiter infra failed — NOT the user hitting a limit. Never present
+        // this as "rate limit exceeded"; it is a temporary service problem.
+        console.error("Rate limiter unreachable during draft generation", {
+          requestId, userId: auth.user.id, operation: "generateDraft", bucket: "ai-draft",
+        });
+        return { success: false, error: "Draft generation is temporarily unavailable. Please try again in a moment." };
+      } else {
+        console.log(JSON.stringify({
+          event: "ai_draft.rate_limited", requestId, userId: auth.user.id, operation: "generateDraft",
+          provider, bucket: "ai-draft", attempt, result: "denied", timestamp: new Date().toISOString(),
+        }));
+        return { success: false, error: DRAFT_RATE_LIMIT_ERROR };
+      }
+
+      const guidelines: Record<string, string> = {
+        gmail: "formal email format with greeting and sign-off",
+        slack: "casual, direct channel message (no greeting/sign-off needed)",
+        whatsapp: "short, friendly chat message",
+        telegram: "concise, direct message",
+        discord: "casual channel message",
+      };
+
+      const served = await llmGateway.complete({
+        task: "fast",
+        temperature: 0.7,
+        maxTokens: 500,
+        messages: [
+          {
+            role: "system",
+            content: `You are a draft message generator. Generate a concise, professional message draft.
 Platform: ${platform}
 Guidelines: ${guidelines[platform] || "general professional tone"}
 
 Output ONLY the message text, no explanations.`,
-        },
-        { role: "user", content: normalizedInstruction },
-      ],
-    });
+          },
+          { role: "user", content: normalizedInstruction },
+        ],
+      });
 
-    const draft = served.content.trim();
-    if (!draft) {
-      return { success: false, error: "AI returned empty response" };
+      const draft = served.content.trim();
+      if (!draft) {
+        return { success: false, error: "AI returned empty response" };
+      }
+      console.log(JSON.stringify({
+        event: "ai_draft.generated", requestId, userId: auth.user.id, operation: "generateDraft",
+        provider: served.provider, model: served.model, bucket: "ai-draft", attempt, result: "success",
+        durationMs: Date.now() - startedAt, timestamp: new Date().toISOString(),
+      }));
+      return { success: true, draft };
+    } catch (err: unknown) {
+      console.error("ai_draft.failed", JSON.stringify({
+        event: "ai_draft.failed", requestId, userId: auth.user.id, operation: "generateDraft",
+        provider, bucket: "ai-draft", attempt, result: "error", durationMs: Date.now() - startedAt,
+        timestamp: new Date().toISOString(),
+      }));
+      return { success: false, error: err instanceof Error ? err.message : "Failed to generate draft" };
     }
-    return { success: true, draft };
-  } catch (err: unknown) {
-    console.error("Draft generation failed:", err);
-    return { success: false, error: err instanceof Error ? err.message : "Failed to generate draft" };
-  }
+  });
 }
 
 export async function sendMessageAction(
@@ -468,6 +528,10 @@ export async function sendMessageAction(
     return { success: false, error: "Subject must not exceed 300 characters" };
   }
 
+  // Single-flight: an identical send while one is in flight shares that request,
+  // preventing a double-click from sending the message twice.
+  const dedupe = dedupeKey(["send", access.userId, platform, normalizedRecipient, normalizedBody, subject ?? ""]);
+  return singleFlight(dedupe, async () => {
   try {
     let mcpResult;
 
@@ -516,4 +580,5 @@ export async function sendMessageAction(
     console.error(`Send message failed for ${platform}:`, err);
     return { success: false, error: errMsg };
   }
+  });
 }

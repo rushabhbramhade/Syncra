@@ -1,21 +1,3 @@
-export interface IntelligenceHealthDimension {
-  name: string;
-  score: number;
-  reason: string;
-}
-
-export interface IntelligenceHealth {
-  overall: number;
-  breakdown: IntelligenceHealthDimension[];
-  summary: string;
-}
-
-export interface IntelligenceInsight {
-  text: string;
-  type: "pattern" | "warning" | "opportunity" | "concept";
-  importance: "high" | "medium" | "low";
-}
-
 export interface IntelligenceRelationship {
   title: string;
   summary: string;
@@ -33,6 +15,11 @@ export interface IntelligenceRecommendation {
   confidence: number;
   affectedPlatforms: string[];
   relatedData: string[];
+  /** Real Gmail provenance resolved by the backend from the referenced item —
+   * never AI-invented. Used to build a truthful "Open in Gmail" link. */
+  threadId?: string;
+  messageId?: string;
+  rfc822MessageId?: string;
 }
 
 export interface IntelligenceTimelineEntry {
@@ -42,7 +29,7 @@ export interface IntelligenceTimelineEntry {
 }
 
 export interface IntelligenceConfidence {
-  overall: number;
+  overall?: number;
   reason: string;
   missingData: string[];
 }
@@ -55,8 +42,6 @@ export interface IntelligenceSourceStat {
 }
 
 export interface BriefingIntelligence {
-  health: IntelligenceHealth;
-  insights: IntelligenceInsight[];
   relationships: IntelligenceRelationship[];
   recommendations: IntelligenceRecommendation[];
   timeline: IntelligenceTimelineEntry[];
@@ -71,8 +56,6 @@ export interface IntelligenceGoal {
 }
 
 export interface BriefingIntelligenceContent {
-  health?: IntelligenceHealth;
-  insights?: IntelligenceInsight[];
   relationships?: IntelligenceRelationship[];
   recommendations?: IntelligenceRecommendation[];
   goals?: IntelligenceGoal[];

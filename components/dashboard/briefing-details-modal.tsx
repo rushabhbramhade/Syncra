@@ -6,10 +6,11 @@ import { replyToBriefingItemAction, updateBriefingItemStatusAction, getBriefingI
 import { useAuth } from "@/components/auth-provider";
 import {
   X, Send, Check, Clock, Archive, CheckCircle, Inbox, AlertCircle,
-  Mail, MessageCircle, Calendar, AlertTriangle, FileText, ThumbsUp, MessageSquare, Sparkles
+  Mail, MessageCircle, Calendar, AlertTriangle, FileText, ThumbsUp, MessageSquare, Sparkles, ExternalLink
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { decodeHtmlEntities } from "@/lib/utils";
+import { getGmailDeepLink } from "@/lib/google/gmail-links";
 
 interface BriefingDetailsModalProps {
   isOpen: boolean;
@@ -68,9 +69,23 @@ export function BriefingDetailsModal({ isOpen, onClose, item, onItemUpdated }: B
   const metadata = (item.metadata || {}) as Record<string, any>;
   const title = metadata.title || "Untitled Briefing Item";
   const shortSummary = metadata.shortSummary || "";
-  const originalContent = decodeHtmlEntities(metadata.originalContent || "No original content available.");
+  const originalContent = decodeHtmlEntities(metadata.originalContent || "");
+  const hasOriginalContent = Boolean(originalContent.trim());
   const platform = item.platform.toLowerCase();
   const category = item.category.toLowerCase();
+
+  // Open the REAL source in Gmail — never a guess. threadId wins over
+  // messageId; when neither exists (non-Gmail items) there is nothing to link.
+  const gmailLink =
+    platform === "gmail"
+      ? getGmailDeepLink(
+          typeof metadata.threadId === "string" ? metadata.threadId : undefined,
+          typeof metadata.messageId === "string" ? metadata.messageId : undefined,
+          typeof metadata.rfc822MessageId === "string" ? metadata.rfc822MessageId : undefined
+        )
+      : null;
+  const sourceUrl = typeof metadata.sourceUrl === "string" ? metadata.sourceUrl : null;
+  const externalLink = platform === "gmail" ? (gmailLink || sourceUrl) : sourceUrl;
 
   const renderIcon = () => {
     if (platform === "gmail" || platform === "outlook") return <Mail className="w-5 h-5" />;
@@ -192,7 +207,7 @@ export function BriefingDetailsModal({ isOpen, onClose, item, onItemUpdated }: B
     try {
       const instruction = `Reply to email titled "${title}"${originalContent ? `\n\nOriginal email content:\n${originalContent}` : ""}`;
       const res = await generateDraftAction(instruction, "gmail");
-      if (res.success && res.draft) {
+      if (res.success) {
         setReplyText(res.draft);
       } else {
         setErrorMessage(res.error || "Failed to generate draft");
@@ -303,6 +318,17 @@ export function BriefingDetailsModal({ isOpen, onClose, item, onItemUpdated }: B
                 )}
               </div>
             )}
+            {externalLink && (
+              <a
+                href={externalLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 mb-3 text-[12px] font-bold text-accent-purple hover:text-accent-purple/80 border border-accent-purple/20 hover:border-accent-purple/40 bg-accent-purple/5 hover:bg-accent-purple/10 px-3 py-1.5 rounded-xl transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Open in Gmail</span>
+              </a>
+            )}
             <h3 className="font-display font-black text-xl text-secondary mb-2 leading-snug">{title}</h3>
             {shortSummary && (
               <p className="text-[14px] text-text-slate font-medium leading-relaxed bg-slate-50 dark:bg-slate-900/30 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80">
@@ -316,11 +342,19 @@ export function BriefingDetailsModal({ isOpen, onClose, item, onItemUpdated }: B
               <FileText className="w-4 h-4" />
               <span>Original Transcript / Content</span>
             </h4>
-            <div className="bg-slate-50 dark:bg-slate-900/60 p-5 rounded-2xl border border-slate-100 dark:border-slate-800/80 max-h-[160px] overflow-y-auto shadow-inner">
-              <p className="whitespace-pre-wrap font-sans text-[13px] text-secondary leading-relaxed font-medium">
-                {originalContent}
-              </p>
-            </div>
+            {hasOriginalContent ? (
+              <div className="bg-slate-50 dark:bg-slate-900/60 p-5 rounded-2xl border border-slate-100 dark:border-slate-800/80 max-h-[160px] overflow-y-auto shadow-inner">
+                <p className="whitespace-pre-wrap font-sans text-[13px] text-secondary leading-relaxed font-medium">
+                  {originalContent}
+                </p>
+              </div>
+            ) : (
+              <div className="bg-slate-50 dark:bg-slate-900/60 p-5 rounded-2xl border border-slate-100 dark:border-slate-800/80 flex items-center gap-2 text-[13px] font-semibold text-text-slate">
+                {platform === "gmail"
+                  ? "Full email content is unavailable from Gmail for this item."
+                  : "No original content available for this item."}
+              </div>
+            )}
           </div>
 
           {/* Platform-specific actions */}

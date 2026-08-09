@@ -18,20 +18,21 @@ import {
   buildManifest,
   buildCoverageItems,
   filterGroundedItems,
+  enrichItemsWithRealEntity,
+  enrichRecommendationWithRealGmail,
+  canonicalPriority,
+  derivePriority,
   classifyProviderStatus,
   effectiveActivityTimestamp,
   type ProviderHealth,
   type ProviderHealthReport,
 } from "@/lib/briefing/pipeline";
 import type { NormalizedEntity } from "@/lib/integrations/types";
+import { StageTimer, summarizeStages, type TimingEntry } from "@/lib/briefing/timing";
 
 export interface AIResponseBriefing {
   title: string;
   executiveSummary: string;
-  priorityScore: number;
-  totalImportantItems: number;
-  highPriorityCount: number;
-  readingTimeMinutes: number;
   categories: {
     email?: { totalImportant: number; summary: string; priority: string };
     meetings?: { summary: string; items: Array<{ title: string; time: string; participants: string[]; url?: string }> };
@@ -50,6 +51,9 @@ export interface AIResponseBriefing {
     confidence?: number;
     affectedPlatforms?: string[];
     relatedData?: string[];
+    threadId?: string;
+    messageId?: string;
+    rfc822MessageId?: string;
   }>;
   goals?: Array<{
     text: string;
@@ -68,16 +72,8 @@ export interface AIResponseBriefing {
     from?: string;
     to?: string;
     reasoning?: string;
-  }>;
-  health?: {
-    overall: number;
-    breakdown: Array<{ name: string; score: number; reason: string }>;
-    summary: string;
-  };
-  insights?: Array<{
-    text: string;
-    type: "pattern" | "warning" | "opportunity" | "concept";
-    importance: "high" | "medium" | "low";
+    sourceUrl?: string;
+    metadata?: Record<string, unknown>;
   }>;
   relationships?: Array<{
     title: string;
@@ -91,7 +87,7 @@ export interface AIResponseBriefing {
     platform?: string;
   }>;
   confidence?: {
-    overall: number;
+    overall?: number;
     reason: string;
     missingData: string[];
   };
@@ -199,6 +195,10 @@ export class BriefingService {
     const demoMode = opts?.demoMode ?? false;
     const startTime = Date.now();
     const correlationId = getCorrelationId() || `brief_${startTime.toString(36)}`;
+    // Structured latency instrumentation for every meaningful stage. Metadata
+    // ONLY — never bodies, credentials, or tokens (see security audit).
+    const requestId = correlationId;
+    const stageTimings = new StageTimer({ requestId, userId, operation: "generateBriefing" });
     const log = logger.child({ correlationId, userId, scheduleId, triggerSource });
     const admin = createAdminDb();
     const repo = new BriefingsRepository(admin);
@@ -298,6 +298,7 @@ export class BriefingService {
         ? selectedConnected
         : selectedConnected.filter((p) => p !== "whatsapp");
       log.info("Fetchable active integrations", { activeIntegrations, whatsappReady });
+      stageTimings.mark("integrations");
 
       // 2. Fetch platform data via MCP — all in parallel. Every provider runs
       // through ONE pipeline: fetch → normalize → unified store → aiShape → AI.
@@ -325,11 +326,13 @@ export class BriefingService {
       }
 
       const ingest = async (provider: string, result: { status: string; result?: unknown; error?: { message?: string } }): Promise<void> => {
+        const ingestStart = Date.now();
         const h: ProviderHealth = health[provider] ? { ...health[provider] } : emptyHealth(true);
         if (result.status !== "success" || result.result == null) {
           h.error = result.error?.message || "fetch failed";
           log.warn("MCP fetch returned no data", { provider, error: result.error?.message });
           health[provider] = { ...h, ...classifyProviderStatus(h) };
+          stageTimings.mark("ingest", provider, "fetch_failed");
           return;
         }
         // Partial failure (e.g. GitHub notifications 403 while issues succeeded):
@@ -371,7 +374,8 @@ export class BriefingService {
         h.aiUsed = countItems(rawContext[provider]);
         contextEntities[provider] = entities;
         health[provider] = { ...h, ...classifyProviderStatus(h) };
-        log.info("Briefing provider ingested", { provider, ...h });
+        log.info("Briefing provider ingested", { provider, durationMs: Date.now() - ingestStart, ...h });
+        stageTimings.mark("ingest", provider);
       };
 
       const fetchedProviders: string[] = [];
@@ -454,6 +458,7 @@ export class BriefingService {
       );
       log.info("Fetched platform data", { fetchedProviders, perProviderCounts });
       log.info("Briefing provider health", { health: healthReport });
+      stageTimings.mark("fetch_total");
 
       // Per-provider pipeline report — the observable audit trail for every
       // connected integration. A provider is shown regardless of outcome.
@@ -527,10 +532,6 @@ The response must fit this exact JSON structure:
 {
   "title": "A title for this briefing, e.g., 'Morning Briefing' or 'General Workspace Update'",
   "executiveSummary": "Executive summary of the day's main updates (2-4 sentences). Make it engaging and professional.",
-  "priorityScore": (number between 0 and 100 assessing how busy/critical today is based on unread/pending items),
-  "totalImportantItems": (number representing total critical items across all connected apps),
-  "highPriorityCount": (number of high-priority items),
-  "readingTimeMinutes": (number estimating reading time in minutes),
   "categories": {
     "email": {
       "totalImportant": (number),
@@ -544,7 +545,7 @@ The response must fit this exact JSON structure:
       ]
     },
     "messages": {
-      "summary": "AI summary of important chats, mentions, and updates.",
+      "summary": "AI summary of important chats and messages.",
       "items": [
         { "platform": "slack" | "whatsapp" | "telegram" | "discord", "sender": "Sender name", "text": "Message content", "channel": "Channel name or null" }
       ]
@@ -581,16 +582,6 @@ The response must fit this exact JSON structure:
       "relatedData": ["short references to the source items / threads / projects that motivated this recommendation"]
     }
   ],
-  "health": {
-    "overall": (0 to 100 workspace health score),
-    "breakdown": [
-      { "name": "dimension name (e.g. Communication, Development, Meetings, etc. — ONLY include dimensions with real evidence from data)", "score": (0 to 100), "reason": "why this score — MUST reference actual data items; omit dimension entirely if no evidence exists" }
-    ],
-    "summary": "1-2 sentence health summary"
-  },
-  "insights": [
-    { "text": "observational insight drawn ONLY from actual items", "type": "pattern" | "warning" | "opportunity" | "concept", "importance": "high" | "medium" | "low" }
-  ],
   "relationships": [
     {
       "title": "name of the grouped topic, e.g. 'Deployment Discussion'",
@@ -603,9 +594,8 @@ The response must fit this exact JSON structure:
     { "time": "HH:MM or date-time string", "title": "event description", "platform": "name" }
   ],
   "confidence": {
-    "overall": (0 to 100),
     "reason": "brief statement of how certain the summary is given available data",
-    "missingData": ["what integrations/steps are caches"],
+    "missingData": ["what integrations/steps are missing"],
   },
   "goals": [
     { "text": "a concrete goal for today derived from actual items, e.g. 'Reply to 4 clients'", "priority": "high" | "medium" | "low", "reason": "why this goal matters today" }
@@ -642,7 +632,7 @@ For each platform, provide relevant data: gmail/outlook→emails, slack/whatsapp
 
 CRITICAL: Only report data actually present in <data_context>. Never invent items, summaries, counts, or metrics for any platform or category that has no data. If a requested platform or category returned nothing, omit it entirely (no fabricated placeholders).
 
-ANTI-HALLUCINATION: every priority assignment, health score, insight, relationship, recommendation, goal, timeline entry, and confidence statement must be derivable from the actual items in <data_context>. Never claim something happened that is not in the data. Health breakdown dimensions MUST ONLY be included when there is real supporting evidence from the data — do not create dimensions for "Communication", "Development", "Meetings", "Productivity", "Response Time", "Pending Work" or any other dimension unless actual data items exist to support them. If no evidence exists for a dimension, omit it entirely (do not include with score 0 or "insufficient data"). Never fabricate lastSync timestamps — only set them if present in the item data. Goals must only be things the data actually supports — never invent pending tasks or waiting counts that are not present in the items.`;
+ANTI-HALLUCINATION: every priority assignment, relationship, recommendation, goal, timeline entry, and confidence statement must be derivable from the actual items in <data_context>. Never claim something happened that is not in the data. Never fabricate lastSync timestamps — only set them if present in the item data. Goals must only be things the data actually supports — never invent pending tasks or waiting counts that are not present in the items. Items MUST reference a real sourceId from <data_context>; items without one will be dropped by the backend. Do NOT emit a numeric priority/health/workspace score, an insights section, a busy-score, or reading-time — those features have been removed and any number you invent is discarded.`;
 
       // Phase 9 — balance by importance, not volume. One urgent GitHub issue
       // outweighs 50 routine emails; every provider with data keeps a seat.
@@ -659,6 +649,7 @@ ${buildManifest(healthReport)}`;
       // so always task mode — never racing models for a UX gain that async
       // digest generation does not have.
       const aiResult = await generateJsonResponse<AIResponseBriefing>(systemPrompt + coveragePrompt, rawContext, { temperature: 0.2, task: "reasoning" });
+      stageTimings.mark("ai_generate");
       if (!aiResult) {
         throw new Error("Central AI service returned null response.");
       }
@@ -711,7 +702,21 @@ ${buildManifest(healthReport)}`;
       } else {
         aiResult.items = aiItems;
       }
+
+      // 4.5c Provenance content — (Phase 19). Every item's original content,
+      // sender, recipient, thread/message ids and source link are rewritten
+      // from the REAL synchronized entity. An AI paraphrase is never shown as
+      // "original content" and ids/links always point at the true record.
+      aiResult.items = enrichItemsWithRealEntity(aiResult.items, contextEntities) as AIResponseBriefing["items"];
+      // A recommendation never invents an "Open in Gmail" target: only a real
+      // synchronized gmail entity referenced by sourceId carries the link ids.
+      aiResult.recommendations = enrichRecommendationWithRealGmail(
+        (aiResult.recommendations || []),
+        contextEntities
+      );
+
       const renderedPlatforms = new Set<string>((aiResult.items || []).map((i) => i.platform));
+      stageTimings.mark("grounding_backfill");
 
       log.info("AI briefing response generated", {
         aiTitle: aiResult.title,
@@ -777,7 +782,9 @@ ${buildManifest(healthReport)}`;
         title: aiResult.title || name,
         executive_summary: aiResult.executiveSummary,
         full_content: aiResult as unknown as Record<string, unknown>,
-        priority_score: aiResult.priorityScore || 50,
+        // Real evidence only — priority_score is the count of actual high-priority
+        // grounded items in THIS briefing, never an invented 0-100 "busy score".
+        priority_score: (aiResult.items || []).filter((i) => String(i.priority).toLowerCase() === "high").length,
         source_freshness: Object.fromEntries(
           Object.entries(rawContext).map(([provider, value]) => [
             provider,
@@ -830,10 +837,26 @@ ${buildManifest(healthReport)}`;
               correlationKey: (item as any).correlationKey || null,
               from: item.from || null,
               to: item.to || null,
+              sourceUrl: (item as any).sourceUrl || null,
+              messageId: (item as any).metadata?.messageId || null,
+              threadId: (item as any).metadata?.threadId || null,
+              rfc822MessageId: (item as any).metadata?.rfc822MessageId || null,
+              labels: (item as any).metadata?.labels || null,
+              cc: (item as any).metadata?.cc || null,
+              signals: (item as any).metadata?.signals || null,
               coverage_backfilled: backfilledPlatforms.has(item.platform) || null,
               timestamp_source: timestampSource,
             },
-            priority: item.priority || "normal",
+            priority: (() => {
+              const aiPriority = canonicalPriority(item.priority);
+              if (aiPriority !== "normal") return aiPriority;
+              // AI said "normal"/default — trust real provider evidence when the
+              // entity itself carries a signal (e.g. Gmail IMPORTANT label).
+              return derivePriority(
+                item.platform,
+                ((item as any).metadata as Record<string, unknown>) || {}
+              );
+            })(),
             status: "unread",
             notes: null,
             snoozed_until: null,
@@ -843,6 +866,7 @@ ${buildManifest(healthReport)}`;
       );
 
       // Detect cross-platform correlations and store in metadata
+      stageTimings.mark("persist_items");
       const correlations = detectCorrelations(aiResult.items);
       for (const corr of correlations) {
         const fromItem = storedItems[corr.fromIndex];
@@ -875,8 +899,8 @@ ${buildManifest(healthReport)}`;
         await publishEvent("daily_brief_generated", userId, {
           title: aiResult.title || name,
           executiveSummary: aiResult.executiveSummary,
-          priorityScore: aiResult.priorityScore,
-          totalImportantItems: aiResult.totalImportantItems,
+          itemCount: (aiResult.items || []).length,
+          highPriorityCount: (aiResult.items || []).filter((i) => String(i.priority).toLowerCase() === "high").length,
           date: new Date().toLocaleDateString(),
         });
       } catch (err) {
@@ -906,7 +930,7 @@ ${buildManifest(healthReport)}`;
         }
       }
 
-      log.info("Briefing generation completed", { briefingId, elapsedMs: Date.now() - startTime });
+      log.info("Briefing generation completed", { briefingId, elapsedMs: Date.now() - startTime, stages: summarizeStages(stageTimings.getEntries()) });
       if (runId) await repo.completeRun(runId, briefingId ?? "", Date.now() - startTime);
       return { success: true, briefingId };
     } catch (error: any) {

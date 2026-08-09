@@ -7,6 +7,17 @@ import type {
   UnifiedEvent,
 } from "../integrations/types";
 
+export type CanonicalPriority = "high" | "normal" | "low";
+
+/** Normalize any priority value (AI "medium", mixed case, junk) to the
+ *  single canonical vocabulary used everywhere: high | normal | low. */
+export function canonicalPriority(value: unknown): CanonicalPriority {
+  const v = String(value || "").trim().toLowerCase();
+  if (v === "high" || v === "medium") return v === "medium" ? "normal" : "high";
+  if (v === "low") return "low";
+  return "normal";
+}
+
 /**
  * Briefing data pipeline — the single normalization + health path for every
  * connected integration. Pure module: no DB, no @/ aliases, node-testable.
@@ -64,13 +75,17 @@ export function computeQuality(h: ProviderHealth): { score: number; label: strin
  */
 export function effectiveActivityTimestamp(
   item: { platform?: string; sourceId?: string },
-  contextEntities: Record<string, Array<{ providerId?: unknown; sentAt?: string | null; startsAt?: string | null }>>,
+  contextEntities: Record<string, Array<{ providerId?: unknown; sentAt?: string | null; startsAt?: string | null; metadata?: Record<string, unknown> }>>,
 ): string | null {
   if (item.sourceId) {
     const entities = item.platform ? contextEntities[item.platform] : undefined;
     const match = (entities || []).find(
       (e) => String(e.providerId) === String(item.sourceId),
     );
+    // An entity whose provider supplied no real timestamp is marked
+    // timestampMissing — its synthetic stored time is never surfaced as real
+    // activity, so date filters exclude it instead of mislabeling it.
+    if (match?.metadata?.timestampMissing) return null;
     const ts = match ? match.sentAt ?? match.startsAt : undefined;
     if (ts) return ts;
   }
@@ -164,17 +179,62 @@ function normalizeGmail(integrationId: string, raw: unknown): NormalizedEntity[]
     // Only carry a real subject through metadata. An absent/whitespace subject
     // stays empty so downstream title fallback can never surface "No Subject".
     const subject = typeof e.subject === "string" ? e.subject.trim() : "";
-    const snippet = e.snippet || "";
+    // Real Gmail content: prefer the decoded body, fall back to the snippet.
+    // A real message with no snippet/body is still a real provider record and
+    // is kept (neutral "Untitled update" downstream) — never synthesized.
+    const body = typeof e.body === "string" ? e.body.trim() : "";
+    const snippet = typeof e.snippet === "string" ? e.snippet.trim() : "";
+    const bodyText = body || snippet;
+    // Gmail message/label facts are preserved verbatim from the provider payload.
+    const labels = Array.isArray(e.labels) ? (e.labels as unknown[]).map((l) => String(l)) : [];
+    const rawDate = typeof e.rawDate === "string" ? e.rawDate : "";
+    // Resolve the real activity time. Prefer the Date header; fall back to the
+    // provider-verified internalDate (epoch ms, which Gmail passes as either a
+    // number or a numeric string). Only when the provider gave neither do we
+    // mark the entity timestampMissing — downstream never treats that synthetic
+    // time as real activity (see effectiveActivityTimestamp).
+    const parsed = (value: string): string | null => {
+      try {
+        const v = value.trim();
+        // Gmail internalDate is epoch milliseconds; a pure-numeric string must
+        // be parsed as ms, not as a date string (new Date("1780000000000") is
+        // Invalid Date). Anything else is parsed as an ISO/HTTP date.
+        const numeric = /^-?\d+$/.test(v) ? Number(v) : NaN;
+        const d = isNaN(numeric) ? new Date(v) : new Date(numeric);
+        return !isNaN(d.getTime()) ? d.toISOString() : null;
+      } catch {
+        return null;
+      }
+    };
+    let sentAt = rawDate ? parsed(rawDate) : null;
+    let timestampMissing = false;
+    if (!sentAt && e.internalDate != null) {
+      sentAt = parsed(String(e.internalDate));
+    }
+    if (!sentAt) {
+      sentAt = new Date().toISOString();
+      timestampMissing = true;
+    }
     return {
       providerId: String(e.id),
       channelId: e.threadId ? `gmail:${e.threadId}` : null,
-      bodyText: snippet,
-      contentHash: hash("gmail", String(e.id), subject, snippet),
-      sentAt: e.rawDate
-        ? (() => { try { const d = new Date(String(e.rawDate)); return !isNaN(d.getTime()) ? d.toISOString() : new Date().toISOString(); } catch { return new Date().toISOString(); } })()
-        : new Date().toISOString(),
+      bodyText,
+      contentHash: hash("gmail", String(e.id), String(e.threadId || ""), subject, bodyText),
+      sentAt,
       direction: "inbound",
-      metadata: { subject: subject || undefined, from: e.from, to: e.to, unread: e.unread !== false },
+      metadata: {
+        subject: subject || undefined,
+        from: e.from,
+        to: e.to,
+        cc: typeof e.cc === "string" ? e.cc : undefined,
+        unread: e.unread !== false,
+        messageId: e.id ? String(e.id) : undefined,
+        threadId: e.threadId ? String(e.threadId) : undefined,
+        rfc822MessageId: typeof e.rfc822MessageId === "string" && e.rfc822MessageId ? e.rfc822MessageId : undefined,
+        rawDate: rawDate || undefined,
+        labels,
+        timestampMissing,
+      },
     };
   });
 }
@@ -433,6 +493,8 @@ function messageAiShape(e: UnifiedMessage): Record<string, unknown> {
     timestamp: e.sentAt,
     isGroup: meta.isGroup || null,
     unread: meta.unread ?? null,
+    messageId: meta.messageId,
+    threadId: meta.threadId,
   };
 }
 
@@ -566,6 +628,33 @@ export interface CoverageItem {
   correlationKey?: string;
   from?: string;
   to?: string;
+  sourceUrl?: string;
+}
+
+/**
+ * Canonical, evidence-based priority. The ONLY source of truth for a stored
+ * item's priority: derived from REAL provider facts in metadata, never
+ * fabricated and never AI-voted in a way that invents urgency.
+ *
+ * gmail: IMPORTANT label → high; Gmail's own category labels for bulk
+ * content (promotions / updates / forums) → low; otherwise normal.
+ * Every other provider → normal (no reliable priority signal).
+ */
+export function derivePriority(
+  providerId: string,
+  metadata: Record<string, unknown> = {},
+  fallback: "high" | "normal" | "low" = "normal"
+): "high" | "normal" | "low" {
+  const labels = Array.isArray(metadata.labels)
+    ? (metadata.labels as unknown[]).map((l) => String(l))
+    : [];
+  if (providerId === "gmail") {
+    if (labels.includes("IMPORTANT")) return "high";
+    if (labels.some((l) => ["CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS", "CATEGORY_SOCIAL"].includes(l))) {
+      return "low";
+    }
+  }
+  return fallback;
 }
 
 function coverageCategory(entityKind: string, providerId: string): string {
@@ -581,6 +670,59 @@ function firstNonEmpty(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+import { getGmailDeepLink } from "../google/gmail-links.ts";
+
+/**
+ * Quick-reply context resolution (pure — node-testable). Turns briefing item
+ * metadata into exactly what the Gmail MCP send call needs, following the
+ * "never guess" contract:
+ *   threadId   = metadata.threadId ?? metadata.correlationKey
+ *   recipient  = metadata.from (real sender); null → header lookup is required,
+ *                never an invented address.
+ *   subject    = real thread subject with `Re:` where appropriate.
+ * `needsHeaderLookup` is TRUE only when `from` is absent — callers must fetch
+ * the real headers via GmailService.getThreadHeaders before sending.
+ */
+export interface GmailReplyContext {
+  threadId: string | null;
+  messageId: string | null;
+  recipient: string | null;
+  needsHeaderLookup: boolean;
+  lookupThreadId: string;
+  subject: string;
+}
+
+export function resolveGmailReplyContext(metadata: Record<string, unknown>): GmailReplyContext {
+  const threadId =
+    (typeof metadata.threadId === "string" && metadata.threadId) ||
+    (typeof metadata.correlationKey === "string" && metadata.correlationKey) ||
+    null;
+  const messageId = typeof metadata.messageId === "string" && metadata.messageId ? metadata.messageId : null;
+  const fromField = typeof metadata.from === "string" ? metadata.from.trim() : "";
+  const recipient = fromField ? extractGmailRecipient(fromField) : null;
+  const rawSubject = typeof metadata.subject === "string" ? metadata.subject.trim() : "";
+  const subject = rawSubject
+    ? (/^\s*re:/i.test(rawSubject) ? rawSubject : `Re: ${rawSubject}`)
+    : "Re:";
+  return {
+    threadId,
+    messageId,
+    recipient,
+    needsHeaderLookup: !recipient,
+    lookupThreadId: threadId || messageId || "",
+    subject,
+  };
+}
+
+/** Extract the bare RFC822 email from a From/To header (e.g. "A B <a@b.c>"). */
+export function extractGmailRecipient(fromField: string): string | null {
+  const trimmed = fromField.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/<([^>]+)>/);
+  const candidate = (match ? match[1] : trimmed).trim();
+  return /[^\s@]+@[^\s@]+/.test(candidate) ? candidate : null;
 }
 
 /**
@@ -605,11 +747,19 @@ export function buildCoverageItems(providerId: string, entities: NormalizedEntit
       firstNonEmpty(body.split("\n")[0]);
     const title = realTitle ?? "Untitled update";
     const category = coverageCategory(e.entityKind, providerId);
+const sourceUrl =
+      providerId === "gmail"
+        ? getGmailDeepLink(
+            meta.threadId as string | undefined,
+            meta.messageId as string | undefined,
+            meta.rfc822MessageId as string | undefined
+          )
+        : undefined;
     out.push({
       platform: providerId,
       category,
       title: title.slice(0, 160),
-      priority: "normal",
+      priority: derivePriority(providerId, meta),
       shortSummary: body.slice(0, 140) || title,
       // Real content, then the real title (e.g. a commit message), never the
       // neutral fallback — originalContent stays truthful.
@@ -617,12 +767,163 @@ export function buildCoverageItems(providerId: string, entities: NormalizedEntit
       sourceId: rec.providerId || undefined,
       correlationKey: meta.threadId ? String(meta.threadId) : undefined,
       from: category === "email" ? String(meta.from || "") || undefined : undefined,
+      to: category === "email" ? String(meta.to || "") || undefined : undefined,
+      sourceUrl: sourceUrl ?? undefined,
     });
   }
   return out;
 }
 
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, normal: 2, low: 3 };
+
+// ─── Real-entity content enrichment (provenance for AI items) ───────────────
+
+/** A briefing item that still carries its source trace. */
+export interface TraceableBriefingItem {
+  platform?: string;
+  category?: string;
+  title?: string;
+  shortSummary?: string;
+  originalContent?: string;
+  sourceId?: string;
+  correlationKey?: string;
+  from?: string;
+  to?: string;
+}
+
+/** Per-entity evidence signals — real, provider-derived facts shown to the user. */
+export function evidenceSignalsForEntity(
+  e: { providerId?: unknown; sentAt?: string | null; metadata?: Record<string, unknown> },
+  now: Date = new Date()
+): string[] {
+  const signals: string[] = [];
+  const meta = e.metadata || {};
+  if (meta.unread === true) signals.push("unread");
+  const subject = typeof meta.subject === "string" ? meta.subject.trim() : "";
+  if (/^\s*(re|fwd|fw):/i.test(subject)) signals.push("this is a reply/forward within an ongoing conversation");
+  if (Array.isArray(meta.labels) && (meta.labels as string[]).includes("IMPORTANT")) {
+    signals.push("marked Important in Gmail");
+  }
+  if (e.sentAt) {
+    const d = new Date(e.sentAt);
+    if (!isNaN(d.getTime())) {
+      signals.push(isSameLocalDay(d, now) ? "received today" : isSameLocalWeek(d, now) ? "received this week" : "received earlier");
+    }
+  }
+  return signals;
+}
+
+function isSameLocalDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function isSameLocalWeek(a: Date, b: Date): boolean {
+  const start = startOfLocalWeek(b);
+  const end = new Date(start.getTime() + 7 * 86400000);
+  return a.getTime() >= start.getTime() && a.getTime() < end.getTime();
+}
+
+function startOfLocalWeek(d: Date): Date {
+  // User-local calendar week starting Monday.
+  const out = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+  const day = out.getDay(); // 0 = Sunday
+  out.setDate(out.getDate() - ((day + 6) % 7));
+  return out;
+}
+
+/**
+ * Rewrite the AI/backfill item's user-facing fields from the real synchronized
+ * entity it references (Phase 19 provenance). The AI may summarize and order,
+ * but the ORIGINAL CONTENT, sender, recipient, thread/message ids and source
+ * link are always taken from the actual provider record — an AI paraphrase is
+ * never shown as "original content". Items that cannot be traced are left
+ * untouched (they were already dropped by filterGroundedItems with
+ * requireTraceable, but a defensive no-op is harmless).
+ */
+export function enrichItemsWithRealEntity<T extends TraceableBriefingItem>(
+  items: T[],
+  contextEntities: Record<string, unknown[]>,
+  now: Date = new Date()
+): T[] {
+  return items.map((item): T => {
+    const ents = item.platform ? contextEntities[item.platform] : undefined;
+    const match = item.sourceId
+      ? (ents || []).find((e) => String((e as { providerId?: unknown }).providerId) === String(item.sourceId))
+      : undefined;
+    if (!match) return item;
+    const entity = match as { metadata?: Record<string, unknown>; bodyText?: unknown; title?: unknown };
+    const meta = entity.metadata || {};
+    const body = typeof entity.bodyText === "string" ? entity.bodyText.trim() : "";
+    const realTitle = firstNonEmpty(meta.subject) ?? firstNonEmpty(entity.title);
+    const sourceUrl = (item.platform === "gmail")
+      ? getGmailDeepLink(
+          meta.threadId ? String(meta.threadId) : undefined,
+          meta.messageId ? String(meta.messageId) : undefined,
+          meta.rfc822MessageId ? String(meta.rfc822MessageId) : undefined
+        )
+      : undefined;
+    const enriched: T & { metadata?: Record<string, unknown>; signals?: string[] } = {
+      ...item,
+      // Real content is authoritative — replace any AI paraphrase.
+      originalContent: body || realTitle || item.originalContent || "",
+      from: item.category === "email"
+        ? (typeof meta.from === "string" ? meta.from : undefined)
+        : item.from,
+      to: item.category === "email"
+        ? (typeof meta.to === "string" ? meta.to : undefined)
+        : item.to,
+      correlationKey: item.correlationKey ?? (meta.threadId ? String(meta.threadId) : undefined),
+      metadata: {
+        ...((item as { metadata?: Record<string, unknown> }).metadata || {}),
+        subject: meta.subject ? String(meta.subject) : undefined,
+        messageId: meta.messageId ? String(meta.messageId) : undefined,
+        threadId: meta.threadId ? String(meta.threadId) : undefined,
+        rfc822MessageId: meta.rfc822MessageId ? String(meta.rfc822MessageId) : undefined,
+        labels: Array.isArray(meta.labels) ? meta.labels : undefined,
+        cc: typeof meta.cc === "string" ? meta.cc : undefined,
+        sourceUrl: sourceUrl || undefined,
+        signals: evidenceSignalsForEntity(entity, now),
+      },
+    };
+    return enriched;
+  });
+}
+
+/**
+ * Resolve REAL Gmail provenance onto intelligence recommendations. The AI may
+ * suggest an action, but the backend rewrites how it links to Gmail: a
+ * recommendation whose `sourceId` traces to a real synchronized gmail entity
+ * gets that entity's actual threadId/messageId/rfc822MessageId. Any item that
+ * does NOT trace (or is not gmail) keeps no link — the UI then renders no
+ * "Open in Gmail" instead of guessing.
+ */
+export function enrichRecommendationWithRealGmail<T extends {
+  platform?: unknown;
+  sourceId?: unknown;
+  threadId?: unknown;
+  messageId?: unknown;
+  rfc822MessageId?: unknown;
+}>(
+  recommendations: T[],
+  contextEntities: Record<string, unknown[]>
+): T[] {
+  const gmailEntities = contextEntities["gmail"] || [];
+  const byProviderId = new Map<string, Record<string, unknown>>();
+  for (const e of gmailEntities) {
+    const providerId = (e as { providerId?: unknown }).providerId;
+    if (providerId != null) byProviderId.set(String(providerId), (e as Record<string, unknown>).metadata as Record<string, unknown> || {});
+  }
+  return recommendations.map((r) => {
+    if (String(r.platform).toLowerCase() !== "gmail") return r;
+    const meta = byProviderId.get(String(r.sourceId));
+    if (!meta) return r;
+    const threadId = typeof meta.threadId === "string" ? meta.threadId : undefined;
+    const messageId = typeof meta.messageId === "string" ? meta.messageId : undefined;
+    const rfc822MessageId = typeof meta.rfc822MessageId === "string" ? meta.rfc822MessageId : undefined;
+    if (!threadId && !messageId && !rfc822MessageId) return r;
+    return { ...r, threadId, messageId, rfc822MessageId };
+  });
+}
 
 /**
  * Build a Telegram-friendly brief body from REAL persisted briefing items only.

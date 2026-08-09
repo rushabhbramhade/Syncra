@@ -20,7 +20,7 @@ export function WhyTagPopover({ category, signals = [], reason }: WhyTagPopoverP
         className="inline-flex items-center gap-1 text-[10px] font-bold text-text-slate hover:text-accent-purple transition-colors cursor-pointer"
       >
         <Info className="w-3 h-3" />
-        <span>Why tagged as {category}?</span>
+        <span>Why is this here?</span>
       </button>
 
       {open && (

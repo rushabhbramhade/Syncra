@@ -4,6 +4,7 @@ import React, { useState, useMemo } from "react";
 import { BriefingItemRecord } from "@/lib/repositories/briefings-repository";
 import { WhyTagPopover } from "./why-tag-popover";
 import { CorrelationLink } from "./correlation-link";
+import { matchesTimeFilter } from "@/lib/briefing/filters";
 import {
   Search, Inbox, ChevronRight, Mail, MessageCircle, AlertCircle, Bell,
   ThumbsUp, MessageSquare, ExternalLink, Clock, CheckCircle,
@@ -30,8 +31,6 @@ interface BriefingItemMeta {
   whyClassified?: unknown;
   correlation?: { relatedItemId?: string; text?: string; platform?: string };
   timestamp_source?: "activity" | "fallback_generated";
-  mentions?: unknown;
-  isMention?: unknown;
 }
 
 type SmartFilter =
@@ -40,10 +39,11 @@ type SmartFilter =
   | "unread"
   | "today"
   | "this_week"
+  | "this_month"
+  | "next_month"
   | "high"
   | "medium"
-  | "low"
-  | "mentions";
+  | "low";
 
 const SMART_FILTERS: { key: SmartFilter; label: string }[] = [
   { key: "all", label: "All" },
@@ -51,17 +51,21 @@ const SMART_FILTERS: { key: SmartFilter; label: string }[] = [
   { key: "medium", label: "Medium" },
   { key: "low", label: "Low" },
   { key: "needs_reply", label: "Needs Reply" },
-  { key: "mentions", label: "Mentions" },
   { key: "unread", label: "Unread" },
   { key: "today", label: "Today" },
   { key: "this_week", label: "This Week" },
+  { key: "this_month", label: "This Month" },
+  { key: "next_month", label: "Next Month" },
 ];
 
 const PRIORITY_RANK: Record<string, number> = { high: 0, normal: 1, low: 2 };
 
-export function formatWaiting(timestamp: string, timestampSource?: "activity" | "fallback_generated"): string {
+export function formatWaiting(timestamp: string | null | undefined, timestampSource?: "activity" | "fallback_generated"): string {
   if (timestampSource === "fallback_generated") return "generated";
-  const ms = Date.now() - new Date(timestamp).getTime();
+  if (!timestamp) return "generated";
+  const t = new Date(timestamp);
+  if (isNaN(t.getTime())) return "generated";
+  const ms = Date.now() - t.getTime();
   if (ms < 0) return "just now";
   const mins = Math.floor(ms / 60000);
   if (mins < 1) return "just now";
@@ -129,22 +133,20 @@ export const UnifiedItemList = React.memo(function UnifiedItemList({
       const priority = item.priority.toLowerCase();
 
       const meta = (item.metadata || {}) as BriefingItemMeta;
-      const isMention =
-        cat === "mentions" ||
-        Boolean(meta.mentions) ||
-        Boolean(meta.isMention) ||
-        String(meta.title || "").toLowerCase().includes("@");
-
-      const hasActivityTimestamp = meta.timestamp_source === "activity";
+      // Date-scoped filters only ever run against a verified source activity
+      // timestamp — never against briefing generation time. Items whose
+      // provider supplied no real activity time are excluded from them.
+      const hasActivityTimestamp = meta.timestamp_source === "activity" && item.timestamp != null;
 
       if (smartFilter === "high" && priority !== "high") return false;
       if (smartFilter === "medium" && priority !== "normal" && priority !== "medium") return false;
       if (smartFilter === "low" && priority !== "low") return false;
-      if (smartFilter === "mentions" && !isMention) return false;
-      if (smartFilter === "needs_reply" && !["email", "messages", "mentions", "followups", "follow-ups", "follow_ups"].includes(cat)) return false;
+      if (smartFilter === "needs_reply" && !["email", "messages", "followups", "follow-ups", "follow_ups"].includes(cat)) return false;
       if (smartFilter === "unread" && item.status !== "unread") return false;
-      if (smartFilter === "today" && (!hasActivityTimestamp || !isToday(item.timestamp))) return false;
-      if (smartFilter === "this_week" && (!hasActivityTimestamp || !isThisWeek(item.timestamp))) return false;
+      if (smartFilter === "today" && (!hasActivityTimestamp || !matchesTimeFilter(item.timestamp, "today"))) return false;
+      if (smartFilter === "this_week" && (!hasActivityTimestamp || !matchesTimeFilter(item.timestamp, "this_week"))) return false;
+      if (smartFilter === "this_month" && (!hasActivityTimestamp || !matchesTimeFilter(item.timestamp, "this_month"))) return false;
+      if (smartFilter === "next_month" && (!hasActivityTimestamp || !matchesTimeFilter(item.timestamp, "next_month"))) return false;
 
       if (searchQuery.trim()) {
         const meta = item.metadata || {};
@@ -341,20 +343,5 @@ const ItemRow = React.memo(function ItemRow({ item, onItemClick, onMarkDone }: {
     </div>
   );
 });
-
-function isToday(timestamp: string): boolean {
-  const d = new Date(timestamp);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-}
-
-function isThisWeek(timestamp: string): boolean {
-  const d = new Date(timestamp);
-  const now = new Date();
-  if (isNaN(d.getTime())) return false;
-  const msInWeek = 7 * 24 * 60 * 60 * 1000;
-  const diff = now.getTime() - d.getTime();
-  return diff >= -msInWeek && diff <= msInWeek;
-}
 
 export default UnifiedItemList;

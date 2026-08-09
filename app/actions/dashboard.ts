@@ -53,7 +53,10 @@ function mapGroundedItems(items: BriefingItemRecord[]): Pick<DashboardBriefData,
     });
 
     const time = it.timestamp ? new Date(it.timestamp).toLocaleString([], { hour: "2-digit", minute: "2-digit" }) : "";
-    const prio = it.priority === "high" ? "High" : it.priority === "medium" ? "Medium" : "Low";
+    // Canonical stored vocabulary is high|normal|low (normal == medium). Map
+    // both "normal" and "medium" to the Medium label so a normal item is never
+    // shown (or counted) as Low.
+    const prio = it.priority === "high" ? "High" : it.priority === "normal" || it.priority === "medium" ? "Medium" : it.priority === "low" ? "Low" : "Medium";
     priorityItems.push({
       platform: it.platform,
       title: title.length > 60 ? `${title.slice(0, 57)}...` : title,

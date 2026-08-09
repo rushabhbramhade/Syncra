@@ -13,6 +13,8 @@ import {
   classifyProviderStatus,
   effectiveActivityTimestamp,
   composeBriefBody,
+  derivePriority,
+  canonicalPriority,
 } from "../lib/briefing/pipeline.ts";
 
 const INT = "integration-test-id";
@@ -542,4 +544,45 @@ test("health breakdown: AI prompt no longer requests fixed six dimensions", () =
   assert.ok(!health.breakdown.find(d => d.name === "Productivity"), "Productivity omitted when no evidence");
   assert.ok(!health.breakdown.find(d => d.name === "Response Time"), "Response Time omitted when no evidence");
   assert.ok(!health.breakdown.find(d => d.name === "Pending Work"), "Pending Work omitted when no evidence");
+});
+
+test("derivePriority: gmail IMPORTANT label is genuinely high", () => {
+  assert.equal(derivePriority("gmail", { labels: ["IMPORTANT", "INBOX"] }), "high");
+  assert.equal(derivePriority("gmail", { labels: ["INBOX"] }), "normal");
+});
+
+test("derivePriority: Gmail bulk categories are genuinely low (real labels, not votes)", () => {
+  assert.equal(derivePriority("gmail", { labels: ["CATEGORY_PROMOTIONS"] }), "low");
+  assert.equal(derivePriority("gmail", { labels: ["CATEGORY_UPDATES"] }), "low");
+  assert.equal(derivePriority("gmail", { labels: ["CATEGORY_FORUMS"] }), "low");
+  assert.equal(derivePriority("gmail", { labels: ["CATEGORY_SOCIAL"] }), "low");
+});
+
+test("derivePriority: non-gmail providers stay normal (no fabricated urgency)", () => {
+  assert.equal(derivePriority("slack", { labels: [] }), "normal");
+  assert.equal(derivePriority("github", { labels: ["IMPORTANT"] }), "normal", "IMPORTANT is only a Gmail signal");
+});
+
+test("canonicalPriority: maps every vocabulary to high|normal|low", () => {
+  assert.equal(canonicalPriority("high"), "high");
+  assert.equal(canonicalPriority("medium"), "normal", "medium collapses to normal");
+  assert.equal(canonicalPriority("MEDIUM"), "normal");
+  assert.equal(canonicalPriority("normal"), "normal");
+  assert.equal(canonicalPriority("low"), "low");
+  assert.equal(canonicalPriority(undefined as unknown as string), "normal");
+  assert.equal(canonicalPriority(""), "normal");
+  assert.equal(canonicalPriority("critical!"), "normal");
+});
+
+test("coverage items derive real priority, not a hardcoded normal", () => {
+  const [promo] = normalizeResult("gmail", [
+    { id: "p1", threadId: "tp", labels: ["CATEGORY_PROMOTIONS"], from: "a@x.com", subject: "Sale", snippet: "b", unread: true },
+  ], INT) as any[];
+  const [important] = normalizeResult("gmail", [
+    { id: "i1", threadId: "ti", labels: ["IMPORTANT"], from: "b@x.com", subject: "Urgent", snippet: "b", unread: true },
+  ], INT) as any[];
+  const [promoItem] = buildCoverageItems("gmail", [promo]);
+  const [imptItem] = buildCoverageItems("gmail", [important]);
+  assert.equal(promoItem.priority, "low", "Gmail bulk category → real low");
+  assert.equal(imptItem.priority, "high", "Gmail IMPORTANT → real high");
 });

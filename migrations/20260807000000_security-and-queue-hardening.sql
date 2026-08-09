@@ -108,7 +108,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  current_time TIMESTAMPTZ := clock_timestamp();
+  clock_ts TIMESTAMPTZ := clock_timestamp();
   window_duration INTERVAL;
   current_row public.rate_limits%ROWTYPE;
 BEGIN
@@ -130,25 +130,25 @@ BEGIN
     p_user_id,
     p_bucket,
     1,
-    current_time,
-    current_time + window_duration,
-    current_time
+    clock_ts,
+    clock_ts + window_duration,
+    clock_ts
   )
   ON CONFLICT (user_id, bucket) DO UPDATE
   SET
     count = CASE
-      WHEN limits.reset_at <= current_time THEN 1
+      WHEN limits.reset_at <= clock_ts THEN 1
       ELSE limits.count + 1
     END,
     window_start = CASE
-      WHEN limits.reset_at <= current_time THEN current_time
+      WHEN limits.reset_at <= clock_ts THEN clock_ts
       ELSE limits.window_start
     END,
     reset_at = CASE
-      WHEN limits.reset_at <= current_time THEN current_time + window_duration
+      WHEN limits.reset_at <= clock_ts THEN clock_ts + window_duration
       ELSE limits.reset_at
     END,
-    updated_at = current_time
+    updated_at = clock_ts
   RETURNING limits.* INTO current_row;
 
   RETURN QUERY SELECT
@@ -158,7 +158,7 @@ BEGIN
     CASE
       WHEN current_row.count <= p_max_requests THEN 0::BIGINT
       ELSE GREATEST(
-        FLOOR(EXTRACT(EPOCH FROM (current_row.reset_at - current_time)) * 1000)::BIGINT,
+        FLOOR(EXTRACT(EPOCH FROM (current_row.reset_at - clock_ts)) * 1000)::BIGINT,
         0::BIGINT
       )
     END;
