@@ -9,7 +9,7 @@ import {
   missingProviderKeys,
   NVIDIA_MODEL_DEFAULTS,
 } from "../lib/llm-gateway/config";
-import { createGateway, LlmGateway, LlmProvider, GatewayEvent, LlmGatewayError } from "../lib/llm-gateway/index";
+import { createGateway, openAiProvider, LlmGateway, LlmProvider, GatewayEvent, LlmGatewayError } from "../lib/llm-gateway/index";
 
 // ---------------------------------------------------------------------------
 // Deterministic clock
@@ -140,7 +140,7 @@ test("resolveOpenRouterChain: explicit model first, then env, then defaults, ded
     assert.equal(chain[0], "custom/free-model");
     assert.ok(chain.includes("openai/gpt-4o-mini"));
     assert.ok(chain.includes("deepseek/deepseek-chat-v3"));
-    assert.ok(chain.includes("google/gemini-2.0-flash-001"));
+    assert.equal(chain[chain.length - 1], "deepseek/deepseek-chat-v3");
   } finally {
     if (oldModel === undefined) delete process.env.OPENROUTER_MODEL;
     else process.env.OPENROUTER_MODEL = oldModel;
@@ -184,6 +184,19 @@ test("complete: on NVIDIA failure falls through to OpenRouter", async () => {
   assert.equal(result.provider, "openrouter");
   assert.match(result.content, /answer from openrouter/);
   assert.ok(events.some((e) => e.kind === "breaker_tripped" && e.provider === "nvidia"));
+});
+
+test("complete: total failure explains the per-provider cause in the error", async () => {
+  const { gateway } = makeGateway({ nvidiaFail: true, openRouterFail: true });
+  await assert.rejects(
+    () => gateway.complete({ task: "chat", messages: [{ role: "user", content: "hi" }] }),
+    (err: any) =>
+      err instanceof LlmGatewayError &&
+      /All LLM providers failed/.test(err.message) &&
+      /Chain:/.test(err.message) &&
+      /nvidia\//.test(err.message) &&
+      /openrouter\//.test(err.message),
+  );
 });
 
 test("complete: exhausted NVIDIA budget routes straight to fallback without another call", async () => {
@@ -306,6 +319,24 @@ test("construction: injected deps bypass the env-key gate (tests/deps only)", ()
     if (oldN) process.env.NVIDIA_API_KEY = oldN;
     if (oldO) process.env.OPENROUTER_API_KEY = oldO;
   }
+});
+
+test("openAiProvider: `signal` goes to SDK options, never into the JSON body", async () => {
+  let captured: { body?: Record<string, unknown>; options?: Record<string, unknown> } = {};
+  const fake = {
+    chat: {
+      completions: {
+        async create(body: Record<string, unknown>, options: Record<string, unknown>) {
+          captured = { body, options };
+          return { choices: [{ message: { content: "x" } }] };
+        },
+      },
+    },
+  };
+  const provider = openAiProvider("nvidia", fake as never);
+  await provider.request({ messages: [], model: "m", signal: new AbortController().signal });
+  assert.equal(captured.body?.signal, undefined, "signal must be stripped from the request body");
+  assert.ok(captured.options?.signal instanceof AbortSignal, "signal must be passed as an SDK option");
 });
 
 test("complete: forced NVIDIA 429 rate-limit falls through to OpenRouter without a user-facing error", async () => {

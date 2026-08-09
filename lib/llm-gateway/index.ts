@@ -196,7 +196,13 @@ export function openAiProvider(name: LlmProviderName, client: OpenAI): LlmProvid
   return {
     name,
     request(params: Record<string, unknown>): Promise<unknown> {
-      return client.chat.completions.create(params as never) as unknown as Promise<unknown>;
+      // The AbortSignal must never be serialized into the request body —
+      // NVIDIA's NIM rejects any unknown body key with 400 ("Unsupported
+      // parameter(s): `signal`"). Hand it to the SDK as an option instead.
+      const { signal, ...body } = params;
+      const options: { signal?: AbortSignal } = {};
+      if (signal instanceof AbortSignal) options.signal = signal;
+      return client.chat.completions.create(body as never, options as never) as unknown as Promise<unknown>;
     },
   };
 }
@@ -409,11 +415,18 @@ export function createGateway(deps?: GatewayDeps): LlmGateway {
     if (!req.messages?.length) throw new LlmGatewayError("messages is required");
     const { route, baseParams } = normalizeRequest(req);
 
+    const failureNotes: string[] = [];
+    const describeFailure = (provider: string, model: string | undefined, err: unknown) => {
+      const cause = errMessage(err);
+      failureNotes.push(`${provider}${model ? `/${model}` : ""}: ${cause}`);
+    };
+
     if (req.mode === "race") {
       const nvidiaLeg = async (): Promise<LlmGatewayResult | null> => {
         try {
           return await attemptNvidia(baseParams, route.nvidiaModel, req.signal);
-        } catch {
+        } catch (err) {
+          describeFailure("nvidia", route.nvidiaModel, err);
           return null;
         }
       };
@@ -421,8 +434,8 @@ export function createGateway(deps?: GatewayDeps): LlmGateway {
         for (const model of route.openRouterFallback) {
           try {
             return await attemptOpenRouter(baseParams, model, req.signal);
-          } catch {
-            // next model in the chain
+          } catch (err) {
+            describeFailure("openrouter", model, err);
           }
         }
         return null;
@@ -430,8 +443,9 @@ export function createGateway(deps?: GatewayDeps): LlmGateway {
       const [nvidiaResult, openRouterResult] = await Promise.all([nvidiaLeg(), openRouterLeg()]);
       const finished = [nvidiaResult, openRouterResult].filter((r): r is LlmGatewayResult => r !== null);
       if (finished.length === 0) {
-        emit({ kind: "no_provider", provider: "nvidia", notes: "both race legs exhausted" });
-        throw new LlmGatewayError("All LLM providers failed; unable to serve the request.");
+        const detail = failureNotes.join(" | ");
+        emit({ kind: "no_provider", provider: "nvidia", notes: detail });
+        throw new LlmGatewayError(`All LLM providers failed; unable to serve the request.${detail ? ` Chain: ${detail}` : ""}`, "nvidia");
       }
       // True "first to finish": both legs start together; pick the fastest one.
       finished.sort((a, b) => a.latencyMs - b.latencyMs);
@@ -441,8 +455,9 @@ export function createGateway(deps?: GatewayDeps): LlmGateway {
     if (nvidiaAllowed()) {
       try {
         return await attemptNvidia(baseParams, route.nvidiaModel, req.signal);
-      } catch {
-        emit({ kind: "fallback_used", provider: "openrouter", notes: "NVIDIA failed; moving down the chain" });
+      } catch (err) {
+        describeFailure("nvidia", route.nvidiaModel, err);
+        emit({ kind: "fallback_used", provider: "openrouter", notes: `NVIDIA failed; moving down the chain: ${errMessage(err)}` });
       }
     } else if (openRouterEnabled() || deps?.openRouterProvider) {
       emit({ kind: "fallback_used", provider: "openrouter", notes: "NVIDIA unavailable (breaker/bucket); running fallback" });
@@ -451,12 +466,13 @@ export function createGateway(deps?: GatewayDeps): LlmGateway {
     for (const model of route.openRouterFallback) {
       try {
         return await attemptOpenRouter(baseParams, model, req.signal);
-      } catch {
-        // next model in the chain
+      } catch (err) {
+        describeFailure("openrouter", model, err);
       }
     }
-    emit({ kind: "no_provider", provider: "openrouter", notes: "OpenRouter chain exhausted" });
-    throw new LlmGatewayError("All LLM providers failed; unable to serve the request.");
+    const detail = failureNotes.join(" | ");
+    emit({ kind: "no_provider", provider: "openrouter", notes: detail || "OpenRouter chain exhausted" });
+    throw new LlmGatewayError(`All LLM providers failed; unable to serve the request.${detail ? ` Chain: ${detail}` : ""}`, "openrouter");
   };
 
   const completeStream = async function* (req: LlmGatewayStreamRequest): AsyncGenerator<LlmGatewayStreamDelta> {
@@ -468,11 +484,13 @@ export function createGateway(deps?: GatewayDeps): LlmGateway {
     }
     const { route, baseParams } = normalizeRequest(req);
 
+    const streamFailureNotes: string[] = [];
     if (nvidiaAllowed()) {
       try {
         yield* streamFromProvider("nvidia", route.nvidiaModel, baseParams, req.signal, NVIDIA_TIMEOUT_MS);
         return;
       } catch (err) {
+        streamFailureNotes.push(`nvidia/${route.nvidiaModel}: ${errMessage(err)}`);
         emit({ kind: "fallback_used", provider: "openrouter", notes: `NVIDIA stream failed before first token: ${errMessage(err)}` });
       }
     }
@@ -481,12 +499,13 @@ export function createGateway(deps?: GatewayDeps): LlmGateway {
       try {
         yield* streamFromProvider("openrouter", model, baseParams, req.signal, OPENROUTER_TIMEOUT_MS);
         return;
-      } catch {
-        // next OpenRouter model
+      } catch (err) {
+        streamFailureNotes.push(`openrouter/${model}: ${errMessage(err)}`);
       }
     }
-    emit({ kind: "no_provider", provider: "openrouter", notes: "OpenRouter stream chain exhausted" });
-    throw new LlmGatewayError("All LLM providers failed to stream.");
+    const streamDetail = streamFailureNotes.join(" | ");
+    emit({ kind: "no_provider", provider: "openrouter", notes: streamDetail || "OpenRouter stream chain exhausted" });
+    throw new LlmGatewayError(`All LLM providers failed to stream.${streamDetail ? ` Chain: ${streamDetail}` : ""}`);
   };
 
   const health = (): LlmGatewayHealth => {

@@ -14,29 +14,41 @@
 export type TaskKey = "chat" | "heavy" | "reasoning" | "fast" | "code";
 
 /**
- * Task → NVIDIA model table (four distinct models; `chat` is an ALIAS of
- * `heavy`, not a fifth model). Task-mapped routing stays within this table —
- * the OpenRouter fallback chain may still include extra models via env.
+ * Task → NVIDIA model table. Verified live against the NVIDIA NIM API on
+ * 2026-08-09 (models that 404/410 for this account are deliberately absent):
  *
- *   heavy     deepseek-ai/deepseek-v4-pro         long-context reasoning jobs
- *   chat      deepseek-ai/deepseek-v4-pro (alias)  interactive / default chat
+ *   heavy     nvidia/nemotron-3-ultra-550b-a55b   long-context heavy jobs
+ *   chat      minimaxai/minimax-m3                default / interactive chat
  *   reasoning nvidia/nemotron-3-ultra-550b-a55b   latent synthesis (digests)
+ *              ^ heavy and reasoning alias the same NVIDIA model
  *   fast      minimaxai/minimax-m3                latency-critical drafts
- *   code      poolside/laguna-xs-2.1              code-generation tools
+ *   code      minimaxai/minimax-m3                code-generation tools
+ *
+ * NOTE: deepseek-ai/deepseek-v4-pro (the old heavy/chat default) reached end
+ * of life 2026-08-07 — NVIDIA returns HTTP 410 for it. minimax-m3 is the
+ * dependable workhorse on this account; nemotron-ultra occasionally 503s on
+ * worker-capacity bursts (the OpenRouter fallback covers that).
  */
 export const NVIDIA_MODEL_DEFAULTS: Record<TaskKey, string> = {
-  heavy: "deepseek-ai/deepseek-v4-pro",
+  heavy: "nvidia/nemotron-3-ultra-550b-a55b",
   reasoning: "nvidia/nemotron-3-ultra-550b-a55b",
   fast: "minimaxai/minimax-m3",
-  code: "poolside/laguna-xs-2.1",
-  chat: "deepseek-ai/deepseek-v4-pro",
+  code: "minimaxai/minimax-m3",
+  chat: "minimaxai/minimax-m3",
 };
 
-/** Built-in OpenRouter fallback chain (used when no task-level env is set). */
+/**
+ * Built-in OpenRouter fallback chain (used when no task-level env is set).
+ * gpt-4o-mini first: it is the only widely-available steady model on this
+ * account. deepseek/deepseek-chat-v3 was re-ordered LAST because it returns
+ * HTTP 402 when the OpenRouter credit balance is near zero (observed with
+ * max_tokens >= ~500). Retired slugs (google/gemini-2.0-flash-001 → 404, and
+ * the vanishing `:free` lineup) are not listed. Any of these can be overridden
+ * per task with OPENROUTER_MODEL_<TASK>.
+ */
 export const OPENROUTER_FALLBACK_DEFAULTS = [
-  "deepseek/deepseek-chat-v3",
   "openai/gpt-4o-mini",
-  "google/gemini-2.0-flash-001",
+  "deepseek/deepseek-chat-v3",
 ];
 
 /** NVIDIA endpoints. */
