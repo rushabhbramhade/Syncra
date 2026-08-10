@@ -10,6 +10,7 @@ import {
   NVIDIA_MODEL_DEFAULTS,
 } from "../lib/llm-gateway/config";
 import { createGateway, openAiProvider, LlmGateway, LlmProvider, GatewayEvent, LlmGatewayError } from "../lib/llm-gateway/index";
+import { classifyLlmError, extractAffordableMaxTokens } from "../lib/llm-gateway/errors";
 
 // ---------------------------------------------------------------------------
 // Deterministic clock
@@ -476,4 +477,227 @@ test("complete: race mode resolves with the leg that finishes first", async () =
   const result = await gateway.complete({ mode: "race", messages: [{ role: "user", content: "r" }] });
   assert.equal(result.provider, "openrouter", "the faster leg wins the race");
   assert.equal(result.mode, "race");
+});
+
+// ---------------------------------------------------------------------------
+// Adaptive 402 affordability retry (OpenRouter low-balance recovery)
+// ---------------------------------------------------------------------------
+
+/** Provider that 402s with an OpenRouter-style "can only afford N" message. */
+function affordable402Provider(affordable: number, opts: { retrySucceeds?: boolean; failEveryTime?: boolean } = {}): LlmProvider {
+  let calls = 0;
+  return {
+    name: "openrouter",
+    async request(params: Record<string, unknown>) {
+      calls++;
+      // Retry attempt (second call for the same model) succeeds unless told otherwise.
+      if (calls >= 2 && opts.retrySucceeds !== false && !opts.failEveryTime) {
+        return { choices: [{ message: { content: `retry success (max_tokens=${params.max_tokens})` } }] };
+      }
+      const err = new Error(
+        `You requested up to ${(params.max_tokens as number) ?? 512} tokens, but can only afford ${affordable}.`,
+      ) as Error & { status: number };
+      err.status = 402;
+      throw err;
+    },
+  };
+}
+
+/** OpenRouter provider that always 402s (no affordable signal variation). */
+function forever402Provider(affordable: number): LlmProvider {
+  return {
+    name: "openrouter",
+    async request() {
+      const err = new Error(`Insufficient credits: can only afford ${affordable}.`) as Error & { status: number };
+      err.status = 402;
+      throw err;
+    },
+  };
+}
+
+test("complete: 402 with affordable budget retries the SAME model once at the clamped budget", async () => {
+  // NVIDIA down → OpenRouter chain: gpt-4o-mini first. It 402s saying it can
+  // only afford 707; the gateway must retry gpt-4o-mini once with max_tokens=707.
+  const openRouter = affordable402Provider(707);
+  const events: GatewayEvent[] = [];
+  const gateway = createGateway({
+    now: () => clock,
+    nvidiaProvider: fakeProvider("nvidia", { fail: true }),
+    openRouterProvider: openRouter,
+    onEvent: (e) => events.push(e),
+  });
+  const result = await gateway.complete({ task: "chat", maxTokens: 4096, messages: [{ role: "user", content: "hi" }] });
+  assert.equal(result.provider, "openrouter");
+  assert.equal(result.content, "retry success (max_tokens=707)");
+  // The retry attempt was recorded as a distinct attempt with retryReason set.
+  const retryEvent = events.find((e) => e.kind === "attempt" && e.retryReason === "payment_required_affordable_budget");
+  assert.ok(retryEvent, "retry attempt must carry retryReason");
+  assert.equal(retryEvent?.originalMaxTokens, 4096);
+  assert.equal(retryEvent?.affordableMaxTokens, 707);
+  assert.equal(retryEvent?.retryMaxTokens, 707);
+  assert.equal(retryEvent?.maxTokens, 707, "epoch carries the reduced budget");
+});
+
+test("complete: affordable budget is clamped to the ORIGINAL max_tokens, never raised", async () => {
+  const openRouter = affordable402Provider(5000); // affordable exceeds the requested budget
+  const gateway = createGateway({
+    now: () => clock,
+    nvidiaProvider: fakeProvider("nvidia", { fail: true }),
+    openRouterProvider: openRouter,
+  });
+  const result = await gateway.complete({ task: "chat", maxTokens: 1024, messages: [{ role: "user", content: "hi" }] });
+  assert.equal(result.content, "retry success (max_tokens=1024)", "clamp to min(affordable, original)");
+});
+
+test("complete: affordable budget < 256 is NOT retried — next model in the chain is tried", async () => {
+  // gpt-4o-mini 402s with affordable=100 (<256, too small for a meaningful
+  // completion) → no retry; deepseek should then be attempted and fail too.
+  const events: GatewayEvent[] = [];
+  const gateway = createGateway({
+    now: () => clock,
+    nvidiaProvider: fakeProvider("nvidia", { fail: true }),
+    openRouterProvider: forever402Provider(100),
+    onEvent: (e) => events.push(e),
+  });
+  await assert.rejects(() => gateway.complete({ task: "chat", maxTokens: 4096, messages: [{ role: "user", content: "hi" }] }), LlmGatewayError);
+  const attempts = events.filter((e) => e.kind === "attempt");
+  assert.ok(attempts.length >= 2, "both chain models were attempted");
+  assert.ok(!attempts.some((e) => e.retryReason), "no affordability retry ran for budget < 256");
+  assert.ok(attempts.every((e) => e.originalMaxTokens === undefined), "no retry epoch recorded");
+});
+
+test("complete: affordable budget == 256 IS retried (floor is inclusive)", async () => {
+  const openRouter = affordable402Provider(256);
+  const gateway = createGateway({
+    now: () => clock,
+    nvidiaProvider: fakeProvider("nvidia", { fail: true }),
+    openRouterProvider: openRouter,
+  });
+  const result = await gateway.complete({ task: "chat", maxTokens: 4096, messages: [{ role: "user", content: "hi" }] });
+  assert.equal(result.content, "retry success (max_tokens=256)");
+});
+
+test("complete: a failed affordability retry continues to the NEXT model, max one retry per model", async () => {
+  // Both models 402 forever. The retry-once rule must not loop: after the
+  // first model's primary 402 + failed retry, the chain moves to deepseek,
+  // whose primary 402 + failed retry exhausts the chain.
+  const events: GatewayEvent[] = [];
+  const gateway = createGateway({
+    now: () => clock,
+    nvidiaProvider: fakeProvider("nvidia", { fail: true }),
+    openRouterProvider: forever402Provider(707),
+    onEvent: (e) => events.push(e),
+  });
+  await assert.rejects(
+    () => gateway.complete({ task: "chat", maxTokens: 4096, messages: [{ role: "user", content: "hi" }] }),
+    (err: any) => {
+      assert.ok(err instanceof LlmGatewayError);
+      // Both models reported 402 affordability — the final error must be
+      // classified as payment_required, never timeout/unknown/success.
+      assert.equal(err.classification?.kind, "payment_required");
+      return true;
+    },
+  );
+  const attempts = events.filter((e) => e.kind === "attempt");
+  assert.equal(attempts.filter((e) => e.retryReason).length, 2, "exactly one retry per chain model");
+  assert.equal(attempts.length, 5, "1 NVIDIA + 2 OpenRouter primaries + 2 retries, no loops");
+  assert.ok(events.some((e) => e.kind === "all_providers_failed"));
+});
+
+test("complete: 402 with no affordable signal falls through to the next model (no retry)", async () => {
+  const noSignal: LlmProvider = {
+    name: "openrouter",
+    async request() {
+      const err = new Error("Insufficient credits, top up your account.") as Error & { status: number };
+      err.status = 402;
+      throw err;
+    },
+  };
+  const events: GatewayEvent[] = [];
+  const gateway = createGateway({
+    now: () => clock,
+    nvidiaProvider: fakeProvider("nvidia", { fail: true }),
+    openRouterProvider: noSignal,
+    onEvent: (e) => events.push(e),
+  });
+  await assert.rejects(() => gateway.complete({ task: "chat", messages: [{ role: "user", content: "hi" }] }), LlmGatewayError);
+  const attempts = events.filter((e) => e.kind === "attempt");
+  assert.ok(attempts.length >= 2, "chain still iterates every model");
+  assert.ok(!attempts.some((e) => e.retryReason), "no retry without an affordable signal");
+});
+
+test("complete: NVIDIA timeout → gpt-4o-mini 402 → affordability retry @ 707 succeeds", async () => {
+  // The production scenario: NVIDIA hangs (timeout), the first OpenRouter
+  // model 402s with a usable budget, and the affordability retry at the
+  // clamped budget recovers the briefing without fabricating credits.
+  const attemptAt = new Map<string, number>();
+  const orchestratedOpenRouter: LlmProvider = {
+    name: "openrouter",
+    async request(params: Record<string, unknown>) {
+      const model = params.model as string;
+      const n = (attemptAt.get(model) ?? 0) + 1;
+      attemptAt.set(model, n);
+      if (model.includes("deepseek")) {
+        const err = new Error(`Insufficient credits, can only afford 412.`) as Error & { status: number };
+        err.status = 402;
+        throw err;
+      }
+      if (model.includes("gpt-4o-mini")) {
+        if (n === 1) {
+          const err = new Error(`You requested up to 4096 tokens, but can only afford 707.`) as Error & { status: number };
+          err.status = 402;
+          throw err;
+        }
+        return { choices: [{ message: { content: `recovered (max_tokens=${params.max_tokens})` } }] };
+      }
+      return { choices: [{ message: { content: "fallback" } }] };
+    },
+  };
+  const timeoutNvidia: LlmProvider = {
+    name: "nvidia",
+    async request() {
+      const err = new Error("The request timed out") as Error & { status: number };
+      err.status = 408;
+      throw err;
+    },
+  };
+  const events: GatewayEvent[] = [];
+  const gateway = createGateway({
+    now: () => clock,
+    nvidiaProvider: timeoutNvidia,
+    openRouterProvider: orchestratedOpenRouter,
+    onEvent: (e) => events.push(e),
+  });
+  const result = await gateway.complete({ task: "reasoning", maxTokens: 4096, messages: [{ role: "user", content: "brief me" }] });
+  assert.equal(result.provider, "openrouter");
+  assert.equal(result.content, "recovered (max_tokens=707)");
+  const nvidiaAttempt = events.find((e) => e.kind === "attempt" && e.provider === "nvidia");
+  assert.equal(nvidiaAttempt?.result, "timeout", "NVIDIA failure classified as timeout, not a user error");
+  assert.ok(events.some((e) => e.kind === "fallback_used"));
+  const retries = events.filter((e) => e.kind === "attempt" && e.retryReason === "payment_required_affordable_budget");
+  assert.equal(retries.length, 1, "gpt-4o-mini retried exactly once and recovered");
+  assert.equal(retries[0]?.retryMaxTokens, 707);
+});
+
+test("classifyLlmError: 402 with 'can only afford N' is payment_required + carries the budget", () => {
+  assert.equal(extractAffordableMaxTokens("You requested up to 4096 tokens, but can only afford 707."), 707);
+  assert.equal(extractAffordableMaxTokens("can only afford 1,024"), 1024);
+  assert.equal(extractAffordableMaxTokens("Insufficient credits, top up."), undefined);
+  const cls = classifyLlmError((() => {
+    const e = new Error("You requested up to 4096 tokens, but can only afford 412.") as Error & { status: number };
+    e.status = 402;
+    return e;
+  })());
+  assert.equal(cls.kind, "payment_required");
+  assert.equal(cls.fallbackable, true);
+  assert.equal(cls.affordableMaxTokens, 412);
+});
+
+test("classifyLlmError: 402 without an affordable signal still falls back but has no budget", () => {
+  const err = new Error("Insufficient credits.") as Error & { status: number };
+  err.status = 402;
+  const cls = classifyLlmError(err);
+  assert.equal(cls.kind, "payment_required");
+  assert.equal(cls.fallbackable, true);
+  assert.equal(cls.affordableMaxTokens, undefined);
 });

@@ -9,6 +9,7 @@ import { resolveNvidiaModel } from "@/lib/llm-gateway/config";
 import { publishEvent } from "@/lib/notifications/events";
 import { BRIEFING_CATEGORIES } from "@/lib/constants/briefing-categories";
 import { logger, getCorrelationId } from "@/lib/logger";
+import { dedupeKey, singleFlight } from "@/lib/single-flight";
 import {
   normalizeResult,
   aiShapeForProvider,
@@ -240,8 +241,14 @@ export class BriefingService {
 
     let runId: string | undefined;
 
-    try {
-      // 0. Claim schedule lock + create run row (idempotency guard). Prevents a
+    // Single-flight deduplication: identical concurrent requests for the same
+    // user+schedule share one generation. The DB schedule lock already protects
+    // scheduled runs; this covers ad-hoc (null scheduleId) and provides an
+    // in-process guard that survives across requests within the same process.
+    const flightKey = dedupeKey(["briefing", userId, scheduleId ?? "adhoc"]);
+    return singleFlight(flightKey, async () => {
+      try {
+        // 0. Claim schedule lock + create run row (idempotency guard). Prevents a
       // manual trigger and the cron from generating the same schedule twice, and
       // makes every run auditable. Manual+schedule duplicates are impossible.
       // Shared only when a null scheduleId (ad-hoc run) is supplied.
@@ -648,10 +655,10 @@ ${buildManifest(healthReport)}`;
       // task class (NVIDIA primary → OpenRouter fallback). Latency-tolerant,
       // so always task mode — never racing models for a UX gain that async
       // digest generation does not have.
-      const aiResult = await generateJsonResponse<AIResponseBriefing>(systemPrompt + coveragePrompt, rawContext, { temperature: 0.2, task: "reasoning" });
+      const aiResult = await generateJsonResponse<AIResponseBriefing>(systemPrompt + coveragePrompt, rawContext, { temperature: 0.2, task: "reasoning", requestId });
       stageTimings.mark("ai_generate");
       if (!aiResult) {
-        throw new Error("Central AI service returned null response.");
+        throw new Error("AI briefing generation is temporarily unavailable. Your connected data was not lost. Please try again shortly.");
       }
 
       // 4.5 Backend-enforced provider coverage. The AI summarizes and
@@ -984,10 +991,11 @@ ${buildManifest(healthReport)}`;
           }
         }
       } catch (histErr) {
-        console.error("Failed to write briefing failure history:", histErr);
-      }
+          console.error("Failed to write briefing failure history:", histErr);
+        }
 
-      return { success: false, error: errorMsg };
-    }
+        return { success: false, error: errorMsg };
+      }
+    });
   }
 }

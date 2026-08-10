@@ -9,6 +9,7 @@
  */
 
 import { llmGateway, LlmGatewayError, LlmGatewayMessage, TaskKey } from "@/lib/llm-gateway";
+import { getCorrelationId } from "@/lib/logger";
 
 interface GenerateJsonOptions {
   temperature?: number;
@@ -16,11 +17,31 @@ interface GenerateJsonOptions {
   task?: TaskKey;
   /** OpenAI-style completion is the content string; JSON.parse happens here. */
   maxTokens?: number;
+  /** Stable correlation id surfaced in gateway attempt logs. */
+  requestId?: string;
 }
 
-function adaptMaxTokens(inputLen: number): number {
+/**
+ * Bounded output budget per task. Heavy/reasoning (briefings, digests) request
+ * up to 4096 output tokens — a full, complete briefing is well inside that and
+ * generation time stays lower than the old unbounded ~8k ceiling. User-facing
+ * tasks (chat/fast/draft) are capped much lower so interactive latency is not
+ * inflated. Quality + groundedness are preserved: the backend re-validates and
+ * re-derives items via filterGroundedItems/buildCoverageItems regardless of
+ * output length.
+ */
+const MAX_OUTPUT_TOKENS: Record<TaskKey, number> = {
+  heavy: 4096,
+  reasoning: 4096,
+  fast: 1024,
+  code: 1536,
+  chat: 1024,
+};
+
+function adaptMaxTokens(inputLen: number, task: TaskKey): number {
   const inputTokens = Math.ceil(inputLen / 4);
-  return Math.max(512, Math.min(8000, 16000 - inputTokens));
+  const adaptive = Math.max(512, 16000 - inputTokens);
+  return Math.min(adaptive, MAX_OUTPUT_TOKENS[task] ?? 1024);
 }
 
 /** Run through the gateway (NVIDIA primary → OpenRouter fallback). */
@@ -29,9 +50,11 @@ export async function generateJsonResponse<T>(
   userData?: Record<string, unknown>,
   options?: GenerateJsonOptions,
 ): Promise<T | null> {
+  const task = options?.task ?? "chat";
+  const requestId = options?.requestId ?? getCorrelationId();
   const contextBlock = userData ? wrapDataContext(userData) : "";
   const inputLen = contextBlock.length + (systemPrompt?.length || 0);
-  const maxTokens = options?.maxTokens ?? adaptMaxTokens(inputLen);
+  const maxTokens = options?.maxTokens ?? adaptMaxTokens(inputLen, task);
 
   const messages: LlmGatewayMessage[] = [
     { role: "system", content: structuredInstruction() },
@@ -43,19 +66,41 @@ export async function generateJsonResponse<T>(
 
   try {
     const result = await llmGateway.complete({
-      task: options?.task ?? "chat",
+      task,
       json: true,
       temperature: options?.temperature ?? 0.7,
       maxTokens,
       messages,
+      requestId,
     });
     if (!result.content) return null;
     const cleaned = result.content.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
     return JSON.parse(cleaned) as T;
   } catch (error) {
-    console.warn(`[ai-service] generateJsonResponse failed via gateway:`, (error as Error)?.message || error);
+    // Structured, metadata-only record of the classified failure. The caller
+    // sees `null` (unchanged contract); diagnostics keep the real reason
+    // (timeout, 402, exhausted chain, ...) without any prompt/key content.
+    console.warn(
+      JSON.stringify({
+        event: "ai.generation_failed",
+        requestId,
+        task,
+        result: "llm_failed",
+        reason: error instanceof LlmGatewayError ? classifyMessage(error) : (error as Error)?.message || "unknown",
+        maxTokens,
+        ts: new Date().toISOString(),
+      }),
+    );
     return null;
   }
+}
+
+/** Derive a compact, non-sensitive classification string from a gateway error. */
+function classifyMessage(error: LlmGatewayError): string {
+  if (error.classification) {
+    return `all_providers_failed:${error.classification.kind}`;
+  }
+  return error.message;
 }
 
 function wrapDataContext(rawContext: Record<string, unknown>): string {

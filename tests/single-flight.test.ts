@@ -99,3 +99,90 @@ test("single-flight: distinct keys run independently in parallel", async () => {
 
   assert.equal(maxActive, 3, "unrelated requests must NOT be serialized");
 });
+
+// ---------------------------------------------------------------------------
+// Briefing single-flight: briefing:{userId}:{scheduleId ?? "adhoc"}
+// ---------------------------------------------------------------------------
+
+test("briefing: concurrent identical (user, schedule) requests share ONE generation", async () => {
+  let generations = 0;
+  const generate = async () => {
+    generations += 1;
+    await new Promise((r) => setTimeout(r, 15));
+    return { success: true, briefingId: "brief-1" };
+  };
+  const key = dedupeKey(["briefing", "user-1", "schedule-42"]);
+
+  const results = await Promise.all(new Array(6).fill(null).map(() => singleFlight(key, generate)));
+
+  assert.equal(generations, 1, "double-triggers / cron+manual must not double-generate");
+  for (const r of results) assert.deepEqual(r, { success: true, briefingId: "brief-1" });
+  assert.equal(isInFlight(key), false, "key released after settlement");
+});
+
+test("briefing: different schedules of the SAME user are isolated", async () => {
+  let runs = 0;
+  const work = async () => { runs += 1; await new Promise((r) => setTimeout(r, 10)); return "done"; };
+
+  const results = await Promise.all([
+    singleFlight(dedupeKey(["briefing", "user-1", "schedule-1"]), work),
+    singleFlight(dedupeKey(["briefing", "user-1", "schedule-2"]), work),
+    singleFlight(dedupeKey(["briefing", "user-1", "schedule-2"]), work),
+  ]);
+
+  assert.equal(runs, 2, "schedule-1 and schedule-2 run independently; schedule-2's duplicate is deduped");
+  assert.deepEqual(results, ["done", "done", "done"]);
+});
+
+test("briefing: different users NEVER share a flight (even for the same schedule)", async () => {
+  let runs = 0;
+  const work = async () => { runs += 1; await new Promise((r) => setTimeout(r, 10)); return `run-${runs}`; };
+
+  const results = await Promise.all([
+    singleFlight(dedupeKey(["briefing", "user-1", "schedule-9"]), work),
+    singleFlight(dedupeKey(["briefing", "user-2", "schedule-9"]), work),
+  ]);
+
+  assert.equal(runs, 2, "USERS are the hard isolation boundary");
+  assert.deepEqual(results, ["run-2", "run-2"], "both flights ran (values race; what matters is 2 invocations)");
+});
+
+test("briefing: ad-hoc (null schedule) keys always use the 'adhoc' suffix", () => {
+  // The service canonicalizes scheduleId ?? "adhoc" BEFORE keying, so the
+  // ad-hoc flight never collides with a scheduled run and null/adhoc match.
+  const adhocKey = dedupeKey(["briefing", "user-1", "adhoc"]);
+  assert.equal(adhocKey, dedupeKey(["briefing", "user-1", "adhoc"]), "adhoc key is deterministic");
+  assert.notEqual(
+    adhocKey,
+    dedupeKey(["briefing", "user-1", "schedule-1"]),
+    "adhoc must not collide with a scheduled run"
+  );
+  assert.notEqual(
+    adhocKey,
+    dedupeKey(["briefing", "user-1", "schedule-adhoc"]),
+    "open-ended list distinct from the sentinel"
+  );
+});
+
+test("briefing: a FAILED generation releases the key so the next click retries", async () => {
+  let runs = 0;
+  const work = async () => { runs += 1; throw new Error("AI briefing generation is temporarily unavailable"); };
+  const key = dedupeKey(["briefing", "user-1", "adhoc"]);
+
+  const [first, second] = await Promise.allSettled([singleFlight(key, work), singleFlight(key, work)]);
+  assert.equal(runs, 1, "concurrent pair collapsed into one flight");
+  assert.equal(first.status, "rejected");
+  assert.equal(second.status, "rejected");
+  assert.equal(isInFlight(key), false, "failed flight must release the key for a genuine retry");
+
+  await assert.rejects(singleFlight(key, work), /temporarily unavailable/);
+  assert.equal(runs, 2, "a repeat call AFTER failure is a real new request");
+});
+
+test("briefing user-facing error message is exact and API-stable", () => {
+  const msg = "AI briefing generation is temporarily unavailable. Your connected data was not lost. Please try again shortly.";
+  assert.equal(msg, "AI briefing generation is temporarily unavailable. Your connected data was not lost. Please try again shortly.");
+  assert.ok(!/Central AI service returned null response/.test(msg), "must never leak the internal null-response wording");
+  assert.ok(!/rate limit/i.test(msg), "must not blame the user's account");
+  assert.ok(!/integration|gmail|outlook|whatsapp/i.test(msg), "must not blame a specific integration");
+});
